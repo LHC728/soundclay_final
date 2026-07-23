@@ -94,7 +94,10 @@ function createProgress(currentState) {
 
     return `
       <div class="progress-node ${status}">
-        <span class="progress-index">${String(index + 1).padStart(2, '0')}</span>
+        <span class="progress-index">
+          ${String(index + 1).padStart(2, '0')}
+        </span>
+
         <span class="progress-line"></span>
       </div>
     `
@@ -105,7 +108,9 @@ function renderReady() {
   return `
     <div class="screen-grid hero-screen">
       <section class="editorial-panel hero-copy">
-        <div class="bracket-label">[ EMOTION MATERIAL SYSTEM ]</div>
+        <div class="bracket-label">
+          [ EMOTION MATERIAL SYSTEM ]
+        </div>
 
         <h1 class="display-title">
           把噪声<br>
@@ -118,12 +123,18 @@ function renderReady() {
         </p>
 
         <div class="action-row">
-          <button class="primary-button" data-action="next">
+          <button
+            class="primary-button"
+            data-action="next"
+            type="button"
+          >
             开始体验
             <span>↗</span>
           </button>
 
-          <span class="action-code">SESSION / 001</span>
+          <span class="action-code">
+            SESSION / 001
+          </span>
         </div>
 
         <div class="micro-note">
@@ -138,15 +149,23 @@ function renderReady() {
           <span>MODE / EXPRESS</span>
         </div>
 
-        <div id="sculpture-stage" class="hero-sculpture"></div>
+        <div
+          id="sculpture-stage"
+          class="hero-sculpture"
+        ></div>
 
         <div class="visual-caption">
           <span>声音不是播放内容</span>
           <strong>它是一种材料</strong>
         </div>
 
-        <div class="coordinate coordinate-left">X / 12.04</div>
-        <div class="coordinate coordinate-right">Y / 08.61</div>
+        <div class="coordinate coordinate-left">
+          X / 12.04
+        </div>
+
+        <div class="coordinate coordinate-right">
+          Y / 08.61
+        </div>
       </section>
     </div>
   `
@@ -154,12 +173,16 @@ function renderReady() {
 
 function renderRecording() {
   const waveform = Array.from({ length: 42 }, (_, index) => {
-    const height = 18 + Math.abs(Math.sin(index * 0.72)) * 72
+    const height =
+      18 + Math.abs(Math.sin(index * 0.72)) * 72
 
     return `
       <span
         class="wave-bar"
-        style="--height:${height}px; --delay:${index * -32}ms"
+        style="
+          --height:${height}px;
+          --delay:${index * -32}ms;
+        "
       ></span>
     `
   }).join('')
@@ -169,6 +192,7 @@ function renderRecording() {
       <section class="recording-console">
         <div class="console-head">
           <span>[ AUDIO INPUT ]</span>
+
           <span class="live-status">
             <i></i>
             LIVE
@@ -191,7 +215,9 @@ function renderRecording() {
       </section>
 
       <section class="editorial-panel recording-copy">
-        <div class="bracket-label">[ SPEAK NOW ]</div>
+        <div class="bracket-label">
+          [ SPEAK NOW ]
+        </div>
 
         <h1 class="section-title">
           说出此刻<br>
@@ -224,7 +250,11 @@ function renderRecording() {
           </div>
         </div>
 
-        <button class="primary-button" data-action="next">
+        <button
+          class="primary-button"
+          data-action="next"
+          type="button"
+        >
           模拟录音完成
           <span>↗</span>
         </button>
@@ -238,7 +268,10 @@ function renderUnderstanding() {
     return `
       <span
         class="network-ray"
-        style="--angle:${index * 12.86}deg; --length:${110 + (index % 6) * 26}px"
+        style="
+          --angle:${index * 12.86}deg;
+          --length:${110 + (index % 6) * 26}px;
+        "
       >
         <i></i>
       </span>
@@ -248,7 +281,9 @@ function renderUnderstanding() {
   return `
     <div class="screen-grid understanding-screen">
       <section class="network-stage">
-        <div class="network-label">SEMANTIC FIELD / ACTIVE</div>
+        <div class="network-label">
+          SEMANTIC FIELD / ACTIVE
+        </div>
 
         <div class="network">
           <div class="network-core">AI</div>
@@ -262,7 +297,9 @@ function renderUnderstanding() {
       </section>
 
       <section class="editorial-panel analysis-copy">
-        <div class="bracket-label">[ INTERPRETATION PIPELINE ]</div>
+        <div class="bracket-label">
+          [ INTERPRETATION PIPELINE ]
+        </div>
 
         <h1 class="section-title">
           理解表达<br>
@@ -277,6 +314,7 @@ function renderUnderstanding() {
         <div class="analysis-steps">
           <div class="analysis-step is-done">
             <span>01</span>
+
             <div>
               <strong>语音转文字</strong>
               <small>TRANSCRIPT READY</small>
@@ -285,6 +323,7 @@ function renderUnderstanding() {
 
           <div class="analysis-step is-active">
             <span>02</span>
+
             <div>
               <strong>语义情绪分类</strong>
               <small>PROCESSING</small>
@@ -293,6 +332,7 @@ function renderUnderstanding() {
 
           <div class="analysis-step">
             <span>03</span>
+
             <div>
               <strong>创作配方准备</strong>
               <small>STANDBY</small>
@@ -300,7 +340,11 @@ function renderUnderstanding() {
           </div>
         </div>
 
-        <button class="primary-button" data-action="next">
+        <button
+          class="primary-button"
+          data-action="next"
+          type="button"
+        >
           显示分析结果
           <span>↗</span>
         </button>
@@ -331,7 +375,9 @@ function renderReview() {
       </section>
 
       <section class="review-panel">
-        <div class="bracket-label">[ AI SUGGESTION ]</div>
+        <div class="bracket-label">
+          [ AI SUGGESTION ]
+        </div>
 
         <div class="suggestion-heading">
           <div>
@@ -350,22 +396,46 @@ function renderReview() {
           因此系统将作品起点判断为愤怒或烦躁。
         </p>
 
-        <label class="field-label" for="emotion-select">
+        <label
+          class="field-label"
+          for="emotion-select"
+        >
           修改情绪标签
         </label>
 
         <div class="select-wrap">
           <select id="emotion-select">
-            <option value="joy">开心 / 兴奋</option>
-            <option value="anger" selected>愤怒 / 烦躁</option>
-            <option value="sadness">难过 / 低落</option>
-            <option value="anxiety">紧张 / 不安</option>
-            <option value="neutral_mixed">中性 / 混合</option>
+            <option value="joy">
+              开心 / 兴奋
+            </option>
+
+            <option
+              value="anger"
+              selected
+            >
+              愤怒 / 烦躁
+            </option>
+
+            <option value="sadness">
+              难过 / 低落
+            </option>
+
+            <option value="anxiety">
+              紧张 / 不安
+            </option>
+
+            <option value="neutral_mixed">
+              中性 / 混合
+            </option>
           </select>
         </div>
 
         <div class="review-actions">
-          <button class="primary-button" data-action="confirm-emotion">
+          <button
+            class="primary-button"
+            data-action="confirm-emotion"
+            type="button"
+          >
             确认这份感受
             <span>↗</span>
           </button>
@@ -383,7 +453,9 @@ function renderChoice() {
   return `
     <div class="choice-screen">
       <section class="choice-intro">
-        <div class="bracket-label">[ SELECT DIRECTION ]</div>
+        <div class="bracket-label">
+          [ SELECT DIRECTION ]
+        </div>
 
         <h1 class="display-title choice-title">
           同一种情绪<br>
@@ -397,7 +469,11 @@ function renderChoice() {
       </section>
 
       <section class="mode-grid">
-        <button class="mode-card mode-card-express" data-mode="express">
+        <button
+          class="mode-card mode-card-express"
+          data-mode="express"
+          type="button"
+        >
           <div class="mode-card-head">
             <span>01 / EXPRESS</span>
             <span class="mode-arrow">↗</span>
@@ -411,7 +487,10 @@ function renderChoice() {
 
           <div class="mode-card-content">
             <h2>张扬个性</h2>
-            <p>我想先把它完整、直接而有力量地表达出来。</p>
+
+            <p>
+              我想先把它完整、直接而有力量地表达出来。
+            </p>
 
             <div class="mode-tags">
               <span>高对比</span>
@@ -421,7 +500,11 @@ function renderChoice() {
           </div>
         </button>
 
-        <button class="mode-card mode-card-soothe" data-mode="soothe">
+        <button
+          class="mode-card mode-card-soothe"
+          data-mode="soothe"
+          type="button"
+        >
           <div class="mode-card-head">
             <span>02 / SOOTHE</span>
             <span class="mode-arrow">↗</span>
@@ -435,7 +518,10 @@ function renderChoice() {
 
           <div class="mode-card-content">
             <h2>安慰舒缓</h2>
-            <p>我不否认它，但想让它逐渐稳定并被温柔安放。</p>
+
+            <p>
+              我不否认它，但想让它逐渐稳定并被温柔安放。
+            </p>
 
             <div class="mode-tags">
               <span>低通</span>
@@ -450,31 +536,62 @@ function renderChoice() {
 }
 
 function renderMaterializing() {
+  const isSoothe = selectedMode === 'soothe'
+
   return `
     <div class="screen-grid materializing-screen">
       <section class="editorial-panel material-copy">
-        <div class="bracket-label">[ GENERATING MATERIAL ]</div>
+        <div class="bracket-label">
+          ${
+            isSoothe
+              ? '[ SOOTHING MATERIAL ]'
+              : '[ GENERATING MATERIAL ]'
+          }
+        </div>
 
         <h1 class="display-title">
-          Feeling<br>
-          becomes<br>
-          matter.
+          ${
+            isSoothe
+              ? `
+                Breathe.<br>
+                Settle.<br>
+                Become.
+              `
+              : `
+                Feeling<br>
+                becomes<br>
+                matter.
+              `
+          }
         </h1>
 
         <p class="lede compact">
-          AI 正在根据情绪、模式和声音特征生成结构化创作配方。
-          实时执行将在本地完成。
+          ${
+            isSoothe
+              ? `
+                系统正在把情绪、声音与呼吸节奏组合成柔和的创作配方。
+                万花筒粒子保持原有结构，界面进入安静、明亮的舒缓环境。
+              `
+              : `
+                AI 正在根据情绪、模式和声音特征生成结构化创作配方。
+                实时执行将在本地完成。
+              `
+          }
         </p>
 
         <div class="recipe-grid">
           <div>
             <span>EMOTION</span>
-            <strong>${emotionName(selectedEmotion)}</strong>
+            <strong>
+              ${emotionName(selectedEmotion)}
+            </strong>
           </div>
 
           <div>
             <span>DIRECTION</span>
-            <strong>${modeName(selectedMode)}</strong>
+            <strong>
+              ${modeName(selectedMode)}
+            </strong>
           </div>
 
           <div>
@@ -488,23 +605,46 @@ function renderMaterializing() {
           </div>
         </div>
 
-        <button class="primary-button" data-action="next">
-          进入雕刻
+        <button
+          class="primary-button"
+          data-action="next"
+          type="button"
+        >
+          ${
+            isSoothe
+              ? '进入舒缓雕刻'
+              : '进入雕刻'
+          }
+
           <span>↗</span>
         </button>
       </section>
 
       <section class="material-visual">
         <div class="visual-meta visual-meta-top">
-          <span>OBJECT / FORMING</span>
+          <span>
+            ${
+              isSoothe
+                ? 'OBJECT / BREATHING'
+                : 'OBJECT / FORMING'
+            }
+          </span>
+
           <span>SEED / 0317</span>
         </div>
 
-        <div id="sculpture-stage" class="material-sculpture"></div>
+        <div
+          id="sculpture-stage"
+          class="material-sculpture"
+        ></div>
 
         <div class="material-progress">
           <span>STRUCTURE</span>
-          <div><i></i></div>
+
+          <div>
+            <i></i>
+          </div>
+
           <strong>100%</strong>
         </div>
       </section>
@@ -513,6 +653,8 @@ function renderMaterializing() {
 }
 
 function renderSculpting() {
+  const isSoothe = selectedMode === 'soothe'
+
   return `
     <div class="sculpt-screen">
       <section class="sculpt-stage-panel">
@@ -521,7 +663,10 @@ function renderSculpting() {
           <span>25 HZ / IMU</span>
         </div>
 
-        <div id="sculpture-stage" class="sculpture-stage"></div>
+        <div
+          id="sculpture-stage"
+          class="sculpture-stage"
+        ></div>
 
         <div class="sculpt-readout">
           <div>
@@ -531,58 +676,105 @@ function renderSculpting() {
 
           <div>
             <span>ENERGY</span>
-            <strong>0.74</strong>
+            <strong>
+              ${isSoothe ? '0.31' : '0.74'}
+            </strong>
           </div>
 
           <div>
             <span>FILTER</span>
-            <strong>3.8 kHz</strong>
+            <strong>
+              ${isSoothe ? '1.6 kHz' : '3.8 kHz'}
+            </strong>
           </div>
         </div>
       </section>
 
       <section class="control-panel">
-        <div class="bracket-label">[ PHYSICAL CONTROL ]</div>
+        <div class="bracket-label">
+          [ PHYSICAL CONTROL ]
+        </div>
 
         <h1 class="section-title">
-          用动作<br>
-          塑造声音
+          ${
+            isSoothe
+              ? `
+                让动作<br>
+                慢下来
+              `
+              : `
+                用动作<br>
+                塑造声音
+              `
+          }
         </h1>
 
         <p class="lede compact">
-          戒指不是遥控器，而是作品的一部分。
+          ${
+            isSoothe
+              ? '用缓慢的动作梳理形态，让情绪逐渐沉降。'
+              : '戒指不是遥控器，而是作品的一部分。'
+          }
         </p>
 
         <div class="gesture-list">
           <div class="gesture-row">
             <span class="gesture-index">01</span>
+
             <div>
               <strong>转腕</strong>
-              <small>扭曲形态与滤波器</small>
+
+              <small>
+                ${
+                  isSoothe
+                    ? '缓慢调整形态与声音'
+                    : '扭曲形态与滤波器'
+                }
+              </small>
             </div>
+
             <span class="gesture-symbol">↻</span>
           </div>
 
           <div class="gesture-row">
             <span class="gesture-index">02</span>
+
             <div>
-              <strong>快速挥动</strong>
-              <small>释放一次声音爆散</small>
+              <strong>
+                ${isSoothe ? '平缓挥动' : '快速挥动'}
+              </strong>
+
+              <small>
+                ${
+                  isSoothe
+                    ? '让粒子逐渐扩散'
+                    : '释放一次声音爆散'
+                }
+              </small>
             </div>
-            <span class="gesture-symbol">↯</span>
+
+            <span class="gesture-symbol">
+              ${isSoothe ? '≈' : '↯'}
+            </span>
           </div>
 
           <div class="gesture-row">
             <span class="gesture-index">03</span>
+
             <div>
               <strong>双击</strong>
               <small>凝固并保存作品</small>
             </div>
+
             <span class="gesture-symbol">×2</span>
           </div>
         </div>
 
-        <button class="primary-button danger-button" data-action="freeze">
+        <button
+          class="primary-button danger-button"
+          data-action="freeze"
+          type="button"
+        >
           模拟双击凝固
           <span>◆</span>
         </button>
@@ -592,6 +784,30 @@ function renderSculpting() {
 }
 
 function renderSaved() {
+  const isSoothe = selectedMode === 'soothe'
+
+  const portraitTitle = isSoothe
+    ? `
+      Quiet<br>
+      After<br>
+      Noise
+    `
+    : `
+      Noise<br>
+      Without<br>
+      Apology
+    `
+
+  const portraitDescription = isSoothe
+    ? `
+      一段烦躁的情绪被选择为舒缓安放，
+      并通过呼吸、旋转与沉降形成这件声音作品。
+    `
+    : `
+      一段烦躁的情绪被选择为张扬表达，
+      并通过转腕、爆散与凝固形成这件声音作品。
+    `
+
   return `
     <div class="screen-grid saved-screen">
       <section class="saved-visual">
@@ -600,7 +816,10 @@ function renderSaved() {
           <span>VP-20260723-001</span>
         </div>
 
-        <div id="sculpture-stage" class="portrait-sculpture"></div>
+        <div
+          id="sculpture-stage"
+          class="portrait-sculpture"
+        ></div>
 
         <div class="portrait-stamp">
           ARCHIVED<br>
@@ -609,28 +828,33 @@ function renderSaved() {
       </section>
 
       <section class="saved-details">
-        <div class="bracket-label">[ OUTPUT COMPLETE ]</div>
+        <div class="bracket-label">
+          [ OUTPUT COMPLETE ]
+        </div>
 
         <h1 class="portrait-title">
-          Noise<br>
-          Without<br>
-          Apology
+          ${portraitTitle}
         </h1>
 
         <p class="lede compact">
-          一段烦躁的情绪被选择为张扬表达，
-          并通过转腕、爆散与凝固形成这件声音作品。
+          ${portraitDescription}
         </p>
 
         <div class="portrait-properties">
           <div>
             <span>EMOTION</span>
-            <strong>${emotionName(selectedEmotion)}</strong>
+
+            <strong>
+              ${emotionName(selectedEmotion)}
+            </strong>
           </div>
 
           <div>
             <span>DIRECTION</span>
-            <strong>${modeName(selectedMode)}</strong>
+
+            <strong>
+              ${modeName(selectedMode)}
+            </strong>
           </div>
 
           <div>
@@ -718,11 +942,38 @@ function render() {
   const currentState = getCurrentState()
   const currentMeta = stateMeta[currentState]
 
+  /*
+   * 关键修改：
+   * 把当前模式写入 html 标签。
+   *
+   * 张扬模式：
+   * <html data-mode="express">
+   *
+   * 舒缓模式：
+   * <html data-mode="soothe">
+   *
+   * style.css 可以通过这个属性切换整套配色。
+   */
+  document.documentElement.dataset.mode = selectedMode
+  document.body.dataset.mode = selectedMode
+
   app.innerHTML = `
-    <main class="app-shell mode-${selectedMode} state-${currentState}">
+    <main
+      class="
+        app-shell
+        mode-${selectedMode}
+        state-${currentState}
+      "
+    >
       <header class="topbar">
-        <a href="#" class="brand" data-action="reset">
-          <span class="brand-symbol">SC</span>
+        <a
+          href="#"
+          class="brand"
+          data-action="reset"
+        >
+          <span class="brand-symbol">
+            SC
+          </span>
 
           <span class="brand-copy">
             <strong>SOUNDCLAY</strong>
@@ -730,7 +981,10 @@ function render() {
           </span>
         </a>
 
-        <nav class="nav-links" aria-label="主导航">
+        <nav
+          class="nav-links"
+          aria-label="主导航"
+        >
           <span>INPUT</span>
           <span>INTERPRET</span>
           <span>SHAPE</span>
@@ -754,9 +1008,13 @@ function render() {
         </div>
 
         <div class="progress-count">
-          ${String(STATE_ORDER.indexOf(currentState) + 1).padStart(2, '0')}
+          ${String(
+            STATE_ORDER.indexOf(currentState) + 1,
+          ).padStart(2, '0')}
           /
-          ${String(STATE_ORDER.length).padStart(2, '0')}
+          ${String(
+            STATE_ORDER.length,
+          ).padStart(2, '0')}
         </div>
       </div>
 
@@ -770,9 +1028,14 @@ function render() {
         </div>
 
         ${
-          currentState !== 'ready' && currentState !== 'saved'
+          currentState !== 'ready' &&
+          currentState !== 'saved'
             ? `
-              <button class="back-button" data-action="back">
+              <button
+                class="back-button"
+                data-action="back"
+                type="button"
+              >
                 <span>←</span>
                 返回上一步
               </button>
@@ -804,105 +1067,185 @@ function render() {
 
   if (statesWithSculpture.includes(currentState)) {
     requestAnimationFrame(() => {
-      const container = document.querySelector('#sculpture-stage')
+      const container = document.querySelector(
+        '#sculpture-stage',
+      )
 
-      destroySculpture = initSculpture(container, selectedMode)
+      if (!container) {
+        return
+      }
+
+      /*
+       * 关键修改：
+       * 两种模式固定使用同一套万花筒粒子。
+       *
+       * 不把 selectedMode 传入 sculpture.js，
+       * 防止舒缓模式改变粒子配色、速度和结构。
+       */
+      destroySculpture = initSculpture(
+        container,
+        'express',
+      )
     })
   }
 }
 
 function bindEvents() {
-  document.querySelectorAll('[data-action="next"]').forEach((button) => {
-    button.addEventListener('click', () => {
-      nextState()
-      render()
+  document
+    .querySelectorAll('[data-action="next"]')
+    .forEach((button) => {
+      button.addEventListener('click', () => {
+        nextState()
+        render()
+      })
     })
-  })
 
-  document.querySelectorAll('[data-action="back"]').forEach((button) => {
-    button.addEventListener('click', () => {
-      previousState()
-      render()
+  document
+    .querySelectorAll('[data-action="back"]')
+    .forEach((button) => {
+      button.addEventListener('click', () => {
+        previousState()
+        render()
+      })
     })
-  })
 
-  document.querySelectorAll('[data-action="reset"]').forEach((button) => {
-    button.addEventListener('click', (event) => {
-      event.preventDefault()
+  document
+    .querySelectorAll('[data-action="reset"]')
+    .forEach((button) => {
+      button.addEventListener('click', (event) => {
+        event.preventDefault()
 
-      resetState()
-      selectedEmotion = 'anger'
-      selectedMode = 'express'
+        resetState()
 
-      render()
+        selectedEmotion = 'anger'
+        selectedMode = 'express'
+
+        document.documentElement.dataset.mode =
+          'express'
+
+        document.body.dataset.mode =
+          'express'
+
+        render()
+      })
     })
-  })
 
-  const confirmEmotionButton = document.querySelector(
-    '[data-action="confirm-emotion"]',
-  )
-
-  confirmEmotionButton?.addEventListener('click', () => {
-    const emotionSelect = document.querySelector('#emotion-select')
-
-    selectedEmotion = emotionSelect?.value ?? 'anger'
-
-    goToState('choice')
-    render()
-  })
-
-  document.querySelectorAll('[data-mode]').forEach((button) => {
-    button.addEventListener('click', () => {
-      selectedMode = button.dataset.mode ?? 'express'
-
-      goToState('materializing')
-      render()
-    })
-  })
-
-  const freezeButton = document.querySelector(
-    '[data-action="freeze"]',
-  )
-
-  freezeButton?.addEventListener('click', () => {
-    goToState('saved')
-    render()
-  })
-
-  const downloadButton = document.querySelector(
-    '[data-action="download"]',
-  )
-
-  downloadButton?.addEventListener('click', () => {
-    const metadata = {
-      id: 'VP-20260723-001',
-      emotion: selectedEmotion,
-      emotionLabel: emotionName(selectedEmotion),
-      mode: selectedMode,
-      modeLabel: modeName(selectedMode),
-      createdAt: new Date().toISOString(),
-      files: [
-        'original.wav',
-        'output.wav',
-        'sculpture.png',
-        'metadata.json',
-      ],
-    }
-
-    const blob = new Blob(
-      [JSON.stringify(metadata, null, 2)],
-      { type: 'application/json' },
+  const confirmEmotionButton =
+    document.querySelector(
+      '[data-action="confirm-emotion"]',
     )
 
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
+  confirmEmotionButton?.addEventListener(
+    'click',
+    () => {
+      const emotionSelect =
+        document.querySelector(
+          '#emotion-select',
+        )
 
-    anchor.href = url
-    anchor.download = 'soundclay-metadata.json'
-    anchor.click()
+      selectedEmotion =
+        emotionSelect?.value ?? 'anger'
 
-    URL.revokeObjectURL(url)
-  })
+      goToState('choice')
+      render()
+    },
+  )
+
+  document
+    .querySelectorAll('[data-mode]')
+    .forEach((button) => {
+      button.addEventListener('click', () => {
+        const mode = button.dataset.mode
+
+        selectedMode =
+          mode === 'soothe'
+            ? 'soothe'
+            : 'express'
+
+        /*
+         * 点击模式卡片时立即修改页面主题。
+         */
+        document.documentElement.dataset.mode =
+          selectedMode
+
+        document.body.dataset.mode =
+          selectedMode
+
+        goToState('materializing')
+        render()
+      })
+    })
+
+  const freezeButton =
+    document.querySelector(
+      '[data-action="freeze"]',
+    )
+
+  freezeButton?.addEventListener(
+    'click',
+    () => {
+      goToState('saved')
+      render()
+    },
+  )
+
+  const downloadButton =
+    document.querySelector(
+      '[data-action="download"]',
+    )
+
+  downloadButton?.addEventListener(
+    'click',
+    () => {
+      const metadata = {
+        id: 'VP-20260723-001',
+        emotion: selectedEmotion,
+        emotionLabel:
+          emotionName(selectedEmotion),
+        mode: selectedMode,
+        modeLabel:
+          modeName(selectedMode),
+        createdAt:
+          new Date().toISOString(),
+        files: [
+          'original.wav',
+          'output.wav',
+          'sculpture.png',
+          'metadata.json',
+        ],
+      }
+
+      const blob = new Blob(
+        [
+          JSON.stringify(
+            metadata,
+            null,
+            2,
+          ),
+        ],
+        {
+          type: 'application/json',
+        },
+      )
+
+      const url =
+        URL.createObjectURL(blob)
+
+      const anchor =
+        document.createElement('a')
+
+      anchor.href = url
+      anchor.download =
+        'soundclay-metadata.json'
+
+      document.body.appendChild(anchor)
+
+      anchor.click()
+      anchor.remove()
+
+      URL.revokeObjectURL(url)
+    },
+  )
 }
 
 render()

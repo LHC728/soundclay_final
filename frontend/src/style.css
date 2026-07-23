@@ -2582,3 +2582,518 @@ strong.color-accent {
     min-height: 420px;
   }
 }
+/* =========================================================
+   SOOTHE MODE
+   舒缓模式：白色界面
+   万花筒粒子保持不变
+   ========================================================= */
+
+html[data-mode="soothe"] {
+  color-scheme: light;
+
+  --soothe-page: #f4f6f2;
+  --soothe-page-top: #fbfcf9;
+
+  --soothe-surface: rgba(255, 255, 255, 0.82);
+  --soothe-surface-solid: #ffffff;
+  --soothe-surface-soft: rgba(248, 250, 247, 0.86);
+
+  --soothe-text: #202a23;
+  --soothe-text-secondary: #667168;
+  --soothe-text-muted: #929b94;
+
+  --soothe-primary: #344b3b;
+  --soothe-primary-hover: #273c2e;
+  --soothe-secondary: #8da294;
+  --soothe-accent: #dce7df;
+
+  --soothe-border: rgba(49, 72, 57, 0.1);
+  --soothe-border-strong: rgba(49, 72, 57, 0.18);
+
+  --soothe-shadow:
+    0 24px 70px rgba(49, 70, 56, 0.09);
+}
+
+/* 页面最外层 */
+
+html[data-mode="soothe"],
+html[data-mode="soothe"] body,
+html[data-mode="soothe"] #app {
+  background: var(--soothe-page);
+  color: var(--soothe-text);
+}
+
+html[data-mode="soothe"] .app-shell {
+  background:
+    radial-gradient(
+      circle at 14% 12%,
+      rgba(184, 205, 189, 0.24),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 86% 76%,
+      rgba(219, 231, 222, 0.5),
+      transparent 32%
+    ),
+    linear-gradient(
+      180deg,
+      var(--soothe-page-top) 0%,
+      var(--soothe-page) 100%
+    );
+}
+
+/* 顶部导航 */
+
+html[data-mode="soothe"] .topbar {
+  border-bottom-color:
+    var(--soothe-border);
+}
+
+html[data-mode="soothe"] .brand,
+html[data-mode="soothe"] .brand strong,
+html[data-mode="soothe"] .brand-copy strong {
+  color: var(--soothe-text);
+}
+
+html[data-mode="soothe"] .brand-symbol {
+  color: #ffffff;
+  background: var(--soothe-primary);
+  border-color: var(--soothe-primary);
+}
+
+html[data-mode="soothe"] .brand-copy small,
+html[data-mode="soothe"] .nav-links,
+html[data-mode="soothe"] .nav-links span,
+html[data-mode="soothe"] .system-status {
+  color: var(--soothe-text-muted);
+}
+
+html[data-mode="soothe"] .system-status i {
+  background: #6f9c79;
+  box-shadow:
+    0 0 0 4px rgba(111, 156, 121, 0.12);
+}
+
+/* 进度栏 */
+
+html[data-mode="soothe"] .progress-rail {
+  border-color:
+    var(--soothe-border);
+
+  background:
+    rgba(255, 255, 255, 0.5);
+}
+
+html[data-mode="soothe"] .progress-state span,
+html[data-mode="soothe"] .progress-count,
+html[data-mode="soothe"] .progress-index {
+  color: var(--soothe-text-muted);
+}
+
+html[data-mode="soothe"] .progress-state strong {
+  color: var(--soothe-text);
+}
+
+html[data-mode="soothe"] .progress-line {
+  background:
+    var(--soothe-border-strong);
+}
+
+html[data-mode="soothe"] .progress-node.is-active .progress-index,
+html[data-mode="soothe"] .progress-node.is-complete .progress-index {
+  color: var(--soothe-primary);
+}
+
+html[data-mode="soothe"] .progress-node.is-active .progress-line,
+html[data-mode="soothe"] .progress-node.is-complete .progress-line {
+  background: var(--soothe-primary);
+}
+
+/* 页面主要留白 */
+
+html[data-mode="soothe"] .experience {
+  padding-top: 52px;
+  padding-bottom: 72px;
+}
+
+html[data-mode="soothe"] .state-description {
+  margin-bottom: 44px;
+
+  color: var(--soothe-text-secondary);
+}
+
+html[data-mode="soothe"] .screen-wrap {
+  margin-top: 0;
+}
+
+html[data-mode="soothe"] .screen-grid,
+html[data-mode="soothe"] .sculpt-screen {
+  gap: clamp(40px, 6vw, 84px);
+}
+
+/* 通用标题和正文 */
+
+html[data-mode="soothe"] .display-title,
+html[data-mode="soothe"] .section-title,
+html[data-mode="soothe"] .portrait-title,
+html[data-mode="soothe"] .transcript-text,
+html[data-mode="soothe"] h1,
+html[data-mode="soothe"] h2,
+html[data-mode="soothe"] h3 {
+  color: var(--soothe-text);
+}
+
+html[data-mode="soothe"] .lede,
+html[data-mode="soothe"] .reason-text,
+html[data-mode="soothe"] .voice-quote,
+html[data-mode="soothe"] .review-notice {
+  color: var(--soothe-text-secondary);
+}
+
+html[data-mode="soothe"] .bracket-label,
+html[data-mode="soothe"] .panel-heading,
+html[data-mode="soothe"] .visual-meta,
+html[data-mode="soothe"] .coordinate,
+html[data-mode="soothe"] .action-code,
+html[data-mode="soothe"] .transcript-footer,
+html[data-mode="soothe"] .network-label,
+html[data-mode="soothe"] .meta-label {
+  color: var(--soothe-text-muted);
+}
+
+/* 左侧编辑内容面板 */
+
+html[data-mode="soothe"] .editorial-panel,
+html[data-mode="soothe"] .review-panel,
+html[data-mode="soothe"] .control-panel,
+html[data-mode="soothe"] .saved-details {
+  padding: clamp(32px, 4vw, 52px);
+
+  background:
+    var(--soothe-surface);
+
+  border:
+    1px solid var(--soothe-border);
+
+  border-radius: 30px;
+
+  box-shadow:
+    var(--soothe-shadow);
+
+  backdrop-filter:
+    blur(18px);
+
+  -webkit-backdrop-filter:
+    blur(18px);
+}
+
+/* 面板内部呼吸感 */
+
+html[data-mode="soothe"] .editorial-panel > * + *,
+html[data-mode="soothe"] .review-panel > * + *,
+html[data-mode="soothe"] .control-panel > * + *,
+html[data-mode="soothe"] .saved-details > * + * {
+  margin-top: 24px;
+}
+
+html[data-mode="soothe"] .display-title {
+  margin-top: 28px;
+  margin-bottom: 30px;
+}
+
+html[data-mode="soothe"] .section-title,
+html[data-mode="soothe"] .portrait-title {
+  margin-top: 28px;
+  margin-bottom: 26px;
+}
+
+html[data-mode="soothe"] .lede {
+  line-height: 1.85;
+}
+
+/* 数据和配方卡片 */
+
+html[data-mode="soothe"] .recipe-grid,
+html[data-mode="soothe"] .recording-metrics,
+html[data-mode="soothe"] .portrait-properties,
+html[data-mode="soothe"] .output-grid,
+html[data-mode="soothe"] .sculpt-readout {
+  gap: 16px;
+  margin-top: 38px;
+  margin-bottom: 38px;
+}
+
+html[data-mode="soothe"] .recipe-grid > div,
+html[data-mode="soothe"] .metric-card,
+html[data-mode="soothe"] .output-item,
+html[data-mode="soothe"] .portrait-properties > div,
+html[data-mode="soothe"] .sculpt-readout > div {
+  padding: 22px;
+
+  background:
+    rgba(255, 255, 255, 0.76);
+
+  border:
+    1px solid var(--soothe-border);
+
+  border-radius: 19px;
+
+  box-shadow: none;
+}
+
+html[data-mode="soothe"] .recipe-grid span,
+html[data-mode="soothe"] .metric-card span,
+html[data-mode="soothe"] .output-item span,
+html[data-mode="soothe"] .portrait-properties span,
+html[data-mode="soothe"] .sculpt-readout span {
+  color: var(--soothe-text-muted);
+}
+
+html[data-mode="soothe"] .recipe-grid strong,
+html[data-mode="soothe"] .metric-card strong,
+html[data-mode="soothe"] .output-item strong,
+html[data-mode="soothe"] .portrait-properties strong,
+html[data-mode="soothe"] .sculpt-readout strong {
+  color: var(--soothe-text);
+}
+
+/* 万花筒展示区域 */
+
+html[data-mode="soothe"] .visual-panel,
+html[data-mode="soothe"] .material-visual,
+html[data-mode="soothe"] .sculpt-stage-panel,
+html[data-mode="soothe"] .saved-visual {
+  padding: 26px;
+
+  background:
+    rgba(255, 255, 255, 0.66);
+
+  border:
+    1px solid var(--soothe-border);
+
+  border-radius: 32px;
+
+  box-shadow:
+    var(--soothe-shadow);
+
+  backdrop-filter:
+    blur(16px);
+
+  -webkit-backdrop-filter:
+    blur(16px);
+}
+
+html[data-mode="soothe"] .hero-sculpture,
+html[data-mode="soothe"] .material-sculpture,
+html[data-mode="soothe"] .sculpture-stage,
+html[data-mode="soothe"] .portrait-sculpture {
+  position: relative;
+
+  min-height: 620px;
+
+  overflow: hidden;
+
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(178, 202, 185, 0.28),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 26% 20%,
+      rgba(255, 255, 255, 0.96),
+      transparent 42%
+    ),
+    linear-gradient(
+      180deg,
+      #ffffff 0%,
+      #f1f5f0 100%
+    );
+
+  border:
+    1px solid var(--soothe-border);
+
+  border-radius: 25px;
+}
+
+html[data-mode="soothe"] .hero-sculpture canvas,
+html[data-mode="soothe"] .material-sculpture canvas,
+html[data-mode="soothe"] .sculpture-stage canvas,
+html[data-mode="soothe"] .portrait-sculpture canvas {
+  position: absolute;
+  inset: 0;
+
+  display: block;
+
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* 按钮 */
+
+html[data-mode="soothe"] .primary-button {
+  color: #ffffff;
+
+  background:
+    var(--soothe-primary);
+
+  border-color:
+    var(--soothe-primary);
+
+  box-shadow:
+    0 14px 32px rgba(52, 75, 59, 0.17);
+}
+
+html[data-mode="soothe"] .primary-button:hover {
+  background:
+    var(--soothe-primary-hover);
+}
+
+html[data-mode="soothe"] .danger-button {
+  color: #ffffff;
+
+  background:
+    var(--soothe-primary);
+
+  border-color:
+    var(--soothe-primary);
+}
+
+html[data-mode="soothe"] .outline-button,
+html[data-mode="soothe"] .back-button {
+  color: var(--soothe-primary);
+
+  background:
+    rgba(255, 255, 255, 0.66);
+
+  border-color:
+    var(--soothe-border-strong);
+}
+
+/* 手势控制卡片 */
+
+html[data-mode="soothe"] .gesture-list {
+  margin-top: 38px;
+  margin-bottom: 38px;
+}
+
+html[data-mode="soothe"] .gesture-row {
+  padding: 22px 0;
+
+  border-color:
+    var(--soothe-border);
+}
+
+html[data-mode="soothe"] .gesture-index,
+html[data-mode="soothe"] .gesture-row small {
+  color:
+    var(--soothe-text-muted);
+}
+
+html[data-mode="soothe"] .gesture-row strong,
+html[data-mode="soothe"] .gesture-symbol {
+  color:
+    var(--soothe-text);
+}
+
+/* 保存页 */
+
+html[data-mode="soothe"] .portrait-stamp {
+  color: var(--soothe-primary);
+
+  border-color:
+    var(--soothe-primary);
+
+  background:
+    rgba(255, 255, 255, 0.74);
+}
+
+html[data-mode="soothe"] .saved-actions {
+  gap: 16px;
+  margin-top: 40px;
+}
+
+/* 页脚 */
+
+html[data-mode="soothe"] .site-footer {
+  color:
+    var(--soothe-text-muted);
+
+  border-top-color:
+    var(--soothe-border);
+
+  background:
+    rgba(255, 255, 255, 0.28);
+}
+
+/* 平板 */
+
+@media (max-width: 1100px) {
+  html[data-mode="soothe"] .experience {
+    padding-top: 40px;
+    padding-bottom: 56px;
+  }
+
+  html[data-mode="soothe"] .screen-grid,
+  html[data-mode="soothe"] .sculpt-screen {
+    gap: 40px;
+  }
+
+  html[data-mode="soothe"] .hero-sculpture,
+  html[data-mode="soothe"] .material-sculpture,
+  html[data-mode="soothe"] .sculpture-stage,
+  html[data-mode="soothe"] .portrait-sculpture {
+    min-height: 520px;
+  }
+}
+
+/* 手机 */
+
+@media (max-width: 760px) {
+  html[data-mode="soothe"] .experience {
+    padding-top: 28px;
+    padding-bottom: 40px;
+  }
+
+  html[data-mode="soothe"] .state-description {
+    margin-bottom: 28px;
+  }
+
+  html[data-mode="soothe"] .screen-grid,
+  html[data-mode="soothe"] .sculpt-screen {
+    gap: 28px;
+  }
+
+  html[data-mode="soothe"] .editorial-panel,
+  html[data-mode="soothe"] .review-panel,
+  html[data-mode="soothe"] .control-panel,
+  html[data-mode="soothe"] .saved-details {
+    padding: 24px;
+    border-radius: 22px;
+  }
+
+  html[data-mode="soothe"] .visual-panel,
+  html[data-mode="soothe"] .material-visual,
+  html[data-mode="soothe"] .sculpt-stage-panel,
+  html[data-mode="soothe"] .saved-visual {
+    padding: 15px;
+    border-radius: 22px;
+  }
+
+  html[data-mode="soothe"] .hero-sculpture,
+  html[data-mode="soothe"] .material-sculpture,
+  html[data-mode="soothe"] .sculpture-stage,
+  html[data-mode="soothe"] .portrait-sculpture {
+    min-height: 410px;
+    border-radius: 18px;
+  }
+
+  html[data-mode="soothe"] .recipe-grid,
+  html[data-mode="soothe"] .recording-metrics,
+  html[data-mode="soothe"] .portrait-properties,
+  html[data-mode="soothe"] .output-grid,
+  html[data-mode="soothe"] .sculpt-readout {
+    margin-top: 28px;
+    margin-bottom: 28px;
+  }
+}
