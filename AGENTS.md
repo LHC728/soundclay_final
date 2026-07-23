@@ -1,69 +1,117 @@
-# AGENTS.md — SoundClay Repository Rules
+# AGENTS.md — SoundClay Integration Rules
 
-## Project
-SoundClay is a Zilo Whisper ring + FastAPI + Three.js project.
+## Goal
+Build a complete, stable SoundClay P0 system first. Use a simple frontend for integration. Preserve the existing Three.js/kaleidoscope work for later visual redesign.
 
-Core flow:
-1. Record a short spoken emotional statement with the ring.
-2. Read `backend/audio/original.wav`.
+## Current architecture
+- Backend: FastAPI, local faster-whisper, local emotion analysis, recipe generation, WebSocket, local saving.
+- Frontend: Vite. Existing Three.js visual work may be incomplete or slow.
+- Hardware: Zilo Whisper ring recording and IMU integration will be connected later.
+
+## Allowed scope
+You MAY modify:
+- `backend/**`
+- `frontend/**`
+- `docs/**`
+- root configuration files required for tests or startup
+
+You MUST:
+- preserve existing Three.js and kaleidoscope source files where practical
+- avoid deleting Member D's visual work
+- create a lightweight default integration UI without Three.js
+- keep backend routes backward compatible
+- keep the project runnable offline
+
+## P0 user flow
+1. Check backend connection.
+2. Trigger or upload a WAV recording.
 3. Transcribe with local faster-whisper.
-4. Classify the expressed emotion.
-5. Let the user confirm or edit the emotion.
-6. Let the user select `express` or `soothe`.
-7. Return a stable audio/visual recipe.
-8. Sculpt through ring gestures.
-9. Save the final Voice Portrait.
-
-## Team ownership
-- Member A: ring recording and audio capture.
-- Member B: ring motion, IMU and gesture mapping.
-- Member C: backend, STT, emotion analysis, recipes and saving.
-- Member D: `frontend/`, Three.js, Web Audio and UI.
-
-## Member C scope
-- MAY modify `backend/**`, backend tests, backend docs, and root config required by backend.
-- MUST NOT modify `frontend/**`.
-- MUST NOT overwrite hardware files owned by Members A/B.
-- Preserve existing public routes and backward compatibility.
-- Public motion events are `twist`, `burst`, `freeze`.
-
-## Required routes
-- `GET /health`
-- `GET /api/status`
-- `GET /api/session/current`
-- `POST /api/mock/transcript`
-- `POST /api/stt/transcribe`
-- `POST /api/emotion/confirm`
-- `POST /api/mode/select`
-- `POST /api/save`
-- `POST /api/reset`
-- `WS /ws/ring`
+4. Show transcript.
+5. Show initial expressed-emotion classification.
+6. Let the user confirm or correct the emotion.
+7. Select `express` or `soothe`.
+8. Show real audio features and generated recipe.
+9. Receive or simulate `twist`, `burst`, and `freeze`.
+10. Save the work and show the saved work ID/path.
 
 ## Stable values
-Emotions: `joy`, `anger`, `sadness`, `anxiety`, `neutral-mixed`.
-Modes: `express`, `soothe`.
+Emotions:
+- `joy`
+- `anger`
+- `sadness`
+- `anxiety`
+- `neutral-mixed`
 
-Event types:
-`status`, `transcript_ready`, `audio_features_ready`, `emotion_ready`,
-`material_ready`, `twist`, `burst`, `freeze`, `saved`, `error`.
+Modes:
+- `express`
+- `soothe`
 
-## Security and runtime rules
-- Never commit `.env`, API keys, `.venv`, model caches, generated WAV files, or `works/`.
-- Keep local/offline fallbacks.
-- Do not require OpenAI or an unknown sponsor API for P0.
-- `faster-whisper` is the default STT provider.
-- Do not add auth, a database, accounts, or unrelated frameworks.
-- Do not call models inside the WebSocket motion loop.
+Motion events:
+- `twist`
+- `burst`
+- `freeze`
+
+WebSocket/backend event types:
+- `status`
+- `transcript_ready`
+- `audio_features_ready`
+- `emotion_ready`
+- `material_ready`
+- `twist`
+- `burst`
+- `freeze`
+- `saved`
+- `error`
+
+## Frontend rules
+- Default UI must be lightweight and work without Three.js.
+- Use plain HTML/CSS/JavaScript within the existing Vite project.
+- Do not add React/Vue/Svelte.
+- Do not add heavy UI libraries.
+- Do not remove existing visual modules; isolate or leave them available for later use.
+- Provide clear loading, success, error, and disabled states.
+- Provide a visible event log.
+- Use `http://127.0.0.1:8000` as the default API base and `ws://127.0.0.1:8000/ws/ring` as the default WebSocket endpoint, configurable through Vite environment variables.
+- The frontend must still work with mock routes when no ring is connected.
+
+## Backend rules
+- Keep local `faster-whisper`.
+- Do not require OpenAI or unknown sponsor APIs.
 - Run long audio work through `asyncio.to_thread`.
-- Tests must not download models or need internet.
+- Keep local emotion analysis as the working fallback.
+- No auth, database, or cloud dependency.
+- Never call model inference inside the live motion loop.
+- Validate all data URLs and numeric inputs.
+- Do not break existing endpoints.
 
-## Engineering rules
-- Read existing code before editing.
-- Preserve current working behavior.
-- Add tests for completed features.
-- Run:
-  - `python -m compileall backend`
-  - `python -m pytest -q`
+## Safety and repository hygiene
+Never commit:
+- `.env`
+- API keys
+- `.venv`
+- `node_modules`
+- model caches
+- generated WAV files
+- generated `works/`
+- build output such as `dist/`
+
+## Testing
+Backend:
+- `python -m compileall backend`
+- `python -m pytest -q`
+
+Frontend:
+- `npm run build`
+- run any existing frontend checks
+
+Tests must not:
+- download Whisper models
+- require internet
+- require a real ring
+
+## Finish requirements
+- Run all tests and builds.
+- Fix failures.
+- Report exact files changed, routes changed, commands run, outputs, and remaining hardware dependencies.
 - Commit changes with a clear message.
 - Leave the worktree clean.
-- Report files changed, routes changed, tests run, results, and remaining dependencies.
