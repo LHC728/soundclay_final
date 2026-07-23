@@ -9,38 +9,84 @@ from schemas import AudioFeatures
 
 
 def _clamp01(value: float) -> float:
+    if not np.isfinite(value):
+        return 0.0
     return float(max(0.0, min(1.0, value)))
 
 
-def analyze_audio(path: str | Path) -> AudioFeatures:
-    audio, sample_rate = sf.read(str(path), dtype="float32", always_2d=False)
-    if audio.ndim > 1:
-        audio = audio.mean(axis=1)
+def _analysis_window(audio: np.ndarray, sample_rate: int, seconds: float = 4.0) -> np.ndarray:
+    """Return a bounded center window so spectral work stays predictable."""
+    limit = max(1, int(sample_rate * seconds))
+    if audio.size <= limit:
+        return audio
+    start = (audio.size - limit) // 2
+    return audio[start : start + limit]
 
-    if len(audio) == 0:
+
+def _estimate_pitch(audio: np.ndarray, sample_rate: int) -> float:
+    """Estimate a normalized fundamental with FFT autocorrelation (O(n log n))."""
+    centered = audio.astype(np.float64, copy=False) - float(np.mean(audio))
+    rms = float(np.sqrt(np.mean(centered * centered)))
+    if centered.size < max(32, sample_rate // 25) or rms < 1e-4:
+        return 0.0
+
+    centered = centered * np.hanning(centered.size)
+    fft_size = 1 << max(1, (2 * centered.size - 1).bit_length())
+    spectrum = np.fft.rfft(centered, n=fft_size)
+    correlation = np.fft.irfft(spectrum * np.conjugate(spectrum), n=fft_size)
+    correlation = correlation[: centered.size]
+
+    min_hz = 60.0
+    max_hz = min(500.0, sample_rate / 2.0)
+    min_lag = max(1, int(sample_rate / max_hz))
+    max_lag = min(correlation.size - 1, int(sample_rate / min_hz))
+    if max_lag <= min_lag or correlation[0] <= 0:
+        return 0.0
+
+    candidates = correlation[min_lag : max_lag + 1]
+    lag: float = min_lag + int(np.argmax(candidates))
+    clarity = float(correlation[int(lag)] / (correlation[0] + 1e-12))
+    if clarity < 0.1:
+        return 0.0
+
+    lag_index = int(lag)
+    if 1 <= lag_index < correlation.size - 1:
+        left, middle, right = correlation[lag_index - 1 : lag_index + 2]
+        denominator = left - 2.0 * middle + right
+        if abs(denominator) > 1e-12:
+            lag += float(0.5 * (left - right) / denominator)
+
+    pitch_hz = sample_rate / lag
+    normalized = np.log(pitch_hz / min_hz) / np.log(max_hz / min_hz)
+    return _clamp01(float(normalized))
+
+
+def analyze_audio(path: str | Path) -> AudioFeatures:
+    audio, sample_rate = sf.read(str(path), dtype="float32", always_2d=True)
+    if sample_rate <= 0:
+        raise ValueError("audio sample rate must be positive")
+
+    mono = np.mean(audio, axis=1, dtype=np.float32)
+    mono = np.nan_to_num(mono, nan=0.0, posinf=1.0, neginf=-1.0)
+    if mono.size == 0:
         return AudioFeatures()
 
-    peak = float(np.max(np.abs(audio)))
-    rms = float(np.sqrt(np.mean(np.square(audio)) + 1e-12))
+    rms = float(np.sqrt(np.mean(np.square(mono, dtype=np.float64))))
     volume = _clamp01(rms / 0.25)
+    if rms < 1e-5:
+        return AudioFeatures(volume=volume, pitch=0.0, brightness=0.0)
 
-    windowed = audio * np.hanning(len(audio))
+    spectral_audio = _analysis_window(mono, sample_rate)
+    windowed = (spectral_audio - np.mean(spectral_audio)) * np.hanning(
+        spectral_audio.size
+    )
     spectrum = np.abs(np.fft.rfft(windowed))
-    frequencies = np.fft.rfftfreq(len(audio), d=1.0 / sample_rate)
-    denom = float(np.sum(spectrum)) + 1e-12
-    centroid = float(np.sum(frequencies * spectrum) / denom)
-    brightness = _clamp01(centroid / 5000.0)
-
-    # 轻量自相关基频估计；比赛版只需要稳定的 0–1 特征，不作为专业音高检测。
-    centered = audio - np.mean(audio)
-    corr = np.correlate(centered, centered, mode="full")[len(centered) - 1 :]
-    min_lag = max(1, int(sample_rate / 500))
-    max_lag = min(len(corr) - 1, int(sample_rate / 70))
-    pitch_hz = 220.0
-    if max_lag > min_lag and peak > 0.005:
-        lag = min_lag + int(np.argmax(corr[min_lag:max_lag]))
-        if lag > 0:
-            pitch_hz = sample_rate / lag
-    pitch = _clamp01((pitch_hz - 70.0) / (500.0 - 70.0))
+    frequencies = np.fft.rfftfreq(windowed.size, d=1.0 / sample_rate)
+    denominator = float(np.sum(spectrum)) + 1e-12
+    centroid = float(np.sum(frequencies * spectrum) / denominator)
+    brightness = _clamp01(
+        centroid / max(1.0, min(8000.0, sample_rate / 2.0))
+    )
+    pitch = _estimate_pitch(spectral_audio, sample_rate)
 
     return AudioFeatures(volume=volume, pitch=pitch, brightness=brightness)

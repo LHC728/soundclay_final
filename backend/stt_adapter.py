@@ -4,9 +4,9 @@ import asyncio
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
-from faster_whisper import WhisperModel
 
 load_dotenv()
 
@@ -16,7 +16,7 @@ class STTError(RuntimeError):
 
 
 @lru_cache(maxsize=1)
-def _get_whisper_model() -> WhisperModel:
+def _get_whisper_model() -> Any:
     """
     模型只加载一次，避免每次请求重新加载。
     第一次运行时会下载模型，之后读取本地缓存。
@@ -29,6 +29,8 @@ def _get_whisper_model() -> WhisperModel:
     ).strip()
 
     try:
+        from faster_whisper import WhisperModel
+
         return WhisperModel(
             model_name,
             device=device,

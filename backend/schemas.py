@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from enum import Enum
+import math
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Phase(str, Enum):
@@ -38,8 +39,8 @@ class EmotionResult(BaseModel):
 
 class AudioFeatures(BaseModel):
     volume: float = Field(default=0.0, ge=0.0, le=1.0)
-    pitch: float = Field(default=0.5, ge=0.0, le=1.0)
-    brightness: float = Field(default=0.5, ge=0.0, le=1.0)
+    pitch: float = Field(default=0.0, ge=0.0, le=1.0)
+    brightness: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class SessionState(BaseModel):
@@ -54,6 +55,7 @@ class SessionState(BaseModel):
     features: AudioFeatures = Field(default_factory=AudioFeatures)
     original_audio_url: str | None = None
     output_audio_url: str | None = None
+    motion: dict[str, Any] = Field(default_factory=dict)
     saved_id: str | None = None
     last_error: str | None = None
 
@@ -72,7 +74,31 @@ class ModeSelectRequest(BaseModel):
 
 class SaveRequest(BaseModel):
     screenshot_data_url: str | None = None
-    final_motion: dict[str, float | int | str] = Field(default_factory=dict)
+    processed_audio_data_url: str | None = None
+    final_motion: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("final_motion")
+    @classmethod
+    def validate_final_motion(cls, value: dict[str, Any]) -> dict[str, Any]:
+        def check(item: Any) -> None:
+            if isinstance(item, bool) or item is None or isinstance(item, str):
+                return
+            if isinstance(item, (int, float)):
+                if not math.isfinite(float(item)):
+                    raise ValueError("motion values must be finite")
+                return
+            if isinstance(item, dict):
+                for nested in item.values():
+                    check(nested)
+                return
+            if isinstance(item, list):
+                for nested in item:
+                    check(nested)
+                return
+            raise ValueError("motion values must be JSON-compatible")
+
+        check(value)
+        return value
 
 
 class EventMessage(BaseModel):
