@@ -1,0 +1,27 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Python virtual environment
+.venv/
+venv/
+
+# Secrets
+.env
+.env.local
+.env.*
+!.env.example
+
+# Generated audio
+backend/audio/*.wav
+backend/audio/*.bin
+backend/audio/*.ogg
+
+# Generated works
+works/
+
+# Logs and system files
+*.log
+.vscode/
+.DS_Store
+Thumbs.db
