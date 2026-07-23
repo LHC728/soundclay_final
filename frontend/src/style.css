@@ -2180,3 +2180,405 @@ body {
     width: min(62%, 290px);
   }
 }
+/* =========================================================
+   SOUNDCLAY KALEIDOSCOPE COLOR SYSTEM
+   张扬模式：万花筒彩窗 + 发光科技感
+   ========================================================= */
+
+:root {
+  /* ===== 基础背景 ===== */
+  --bg: #050608;
+  --bg-elev: #0b0e14;
+  --bg-elev-2: #10141d;
+  --panel-bg: rgba(11, 14, 20, 0.72);
+  --panel-bg-strong: rgba(9, 12, 18, 0.9);
+
+  /* ===== 文字 ===== */
+  --text-strong: #f7f8fb;
+  --text: #d8deea;
+  --text-soft: #98a3ba;
+  --text-muted: #6f7890;
+
+  /* ===== 边框 ===== */
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  /* ===== 默认张扬主题（prism） ===== */
+  --k-primary: #ff4a36;
+  --k-secondary: #2fe6ff;
+  --k-tertiary: #ffbf3c;
+  --k-accent: #c94dff;
+  --k-deep: #2f4dff;
+  --k-hot: #ff245b;
+  --k-soft-yellow: #fff06a;
+
+  /* ===== 发光 ===== */
+  --glow-primary: rgba(255, 74, 54, 0.32);
+  --glow-secondary: rgba(47, 230, 255, 0.28);
+  --glow-accent: rgba(201, 77, 255, 0.22);
+  --glow-tertiary: rgba(255, 191, 60, 0.2);
+
+  /* ===== 页面氛围渐变 ===== */
+  --hero-radial-a:
+    radial-gradient(circle at 50% 50%,
+      rgba(255, 74, 54, 0.16) 0%,
+      rgba(255, 74, 54, 0.08) 14%,
+      transparent 42%);
+
+  --hero-radial-b:
+    radial-gradient(circle at 30% 24%,
+      rgba(47, 230, 255, 0.14) 0%,
+      transparent 38%);
+
+  --hero-radial-c:
+    radial-gradient(circle at 76% 68%,
+      rgba(201, 77, 255, 0.12) 0%,
+      transparent 36%);
+
+  --hero-radial-d:
+    radial-gradient(circle at 64% 22%,
+      rgba(255, 191, 60, 0.1) 0%,
+      transparent 28%);
+
+  /* ===== 按钮 ===== */
+  --button-text: #07080b;
+  --button-bg:
+    linear-gradient(
+      135deg,
+      var(--k-tertiary) 0%,
+      #ffd452 30%,
+      var(--k-primary) 100%
+    );
+
+  --button-outline-bg: rgba(255, 255, 255, 0.02);
+  --button-outline-text: var(--text-strong);
+  --button-outline-border: rgba(255, 255, 255, 0.16);
+
+  /* ===== 输入/卡片 ===== */
+  --card-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.42),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+/* =========================================================
+   不同手势主题
+   你可以把手势识别结果映射到下面这些 theme
+   ========================================================= */
+
+/* 1. prism：彩窗万花筒（默认） */
+html[data-kaleido-theme="prism"] {
+  --k-primary: #ff4a36;
+  --k-secondary: #2fe6ff;
+  --k-tertiary: #ffbf3c;
+  --k-accent: #c94dff;
+  --k-deep: #2f4dff;
+  --k-hot: #ff245b;
+  --k-soft-yellow: #fff06a;
+
+  --glow-primary: rgba(255, 74, 54, 0.32);
+  --glow-secondary: rgba(47, 230, 255, 0.28);
+  --glow-accent: rgba(201, 77, 255, 0.22);
+  --glow-tertiary: rgba(255, 191, 60, 0.2);
+}
+
+/* 2. ember：爆发型，红金主导 */
+html[data-kaleido-theme="ember"] {
+  --k-primary: #ff422d;
+  --k-secondary: #4cc8ff;
+  --k-tertiary: #ffc649;
+  --k-accent: #ff7c30;
+  --k-deep: #9226ff;
+  --k-hot: #ff174d;
+  --k-soft-yellow: #fff279;
+
+  --glow-primary: rgba(255, 66, 45, 0.36);
+  --glow-secondary: rgba(76, 200, 255, 0.22);
+  --glow-accent: rgba(255, 124, 48, 0.2);
+  --glow-tertiary: rgba(255, 198, 73, 0.22);
+}
+
+/* 3. neon：科技型，青绿+蓝紫 */
+html[data-kaleido-theme="neon"] {
+  --k-primary: #1fffd0;
+  --k-secondary: #23d7ff;
+  --k-tertiary: #f3ffff;
+  --k-accent: #7b6dff;
+  --k-deep: #0fe6a2;
+  --k-hot: #ff3c8d;
+  --k-soft-yellow: #c6fff8;
+
+  --glow-primary: rgba(31, 255, 208, 0.28);
+  --glow-secondary: rgba(35, 215, 255, 0.28);
+  --glow-accent: rgba(123, 109, 255, 0.22);
+  --glow-tertiary: rgba(243, 255, 255, 0.16);
+}
+
+/* 4. bloom：花窗型，蓝紫+黄橙 */
+html[data-kaleido-theme="bloom"] {
+  --k-primary: #3558ff;
+  --k-secondary: #ffcc38;
+  --k-tertiary: #ff7e4b;
+  --k-accent: #a45cff;
+  --k-deep: #172d9f;
+  --k-hot: #ff3b6b;
+  --k-soft-yellow: #fff088;
+
+  --glow-primary: rgba(53, 88, 255, 0.28);
+  --glow-secondary: rgba(255, 204, 56, 0.24);
+  --glow-accent: rgba(164, 92, 255, 0.2);
+  --glow-tertiary: rgba(255, 126, 75, 0.2);
+}
+
+/* 5. lattice：白网空间型 */
+html[data-kaleido-theme="lattice"] {
+  --k-primary: #ffffff;
+  --k-secondary: #c9f6ff;
+  --k-tertiary: #ff8a52;
+  --k-accent: #7be0ff;
+  --k-deep: #9aa6c8;
+  --k-hot: #ff566a;
+  --k-soft-yellow: #f6ffff;
+
+  --glow-primary: rgba(255, 255, 255, 0.26);
+  --glow-secondary: rgba(201, 246, 255, 0.2);
+  --glow-accent: rgba(123, 224, 255, 0.18);
+  --glow-tertiary: rgba(255, 138, 82, 0.12);
+}
+
+/* =========================================================
+   页面整体应用
+   ========================================================= */
+
+html,
+body {
+  background:
+    var(--hero-radial-a),
+    var(--hero-radial-b),
+    var(--hero-radial-c),
+    var(--hero-radial-d),
+    linear-gradient(180deg, #06070a 0%, #050608 100%);
+  color: var(--text);
+}
+
+body {
+  color: var(--text);
+}
+
+/* 主标题 */
+.display-title,
+.portrait-title,
+.choice-title,
+.section-title,
+.transcript-text,
+.suggestion-heading h2 {
+  color: var(--text-strong);
+}
+
+/* 正文 */
+.lede,
+.voice-quote,
+.state-description,
+.reason-text,
+.mode-card-content p,
+.micro-note,
+.review-notice {
+  color: var(--text);
+}
+
+/* 小字和辅助文字 */
+.bracket-label,
+.panel-heading,
+.visual-meta,
+.coordinate,
+.action-code,
+.transcript-footer,
+.network-label,
+.system-status,
+.progress-state span,
+.progress-count,
+.metric-card span,
+.recipe-grid span,
+.portrait-properties span,
+.sculpt-readout span,
+.output-item > span,
+.mode-card-head,
+.gesture-row small,
+.analysis-step small,
+.output-item small,
+.visual-caption span,
+.suggestion-heading span {
+  color: var(--text-soft);
+}
+
+/* 面板 / 卡片 */
+.mode-card,
+.metric-card,
+.output-item,
+.confidence-box,
+.material-panel,
+.visual-panel,
+.saved-panel,
+.recipe-grid > div,
+.analysis-step,
+.gesture-row {
+  background: var(--panel-bg);
+  border: 1px solid var(--line);
+  box-shadow: var(--card-shadow);
+  backdrop-filter: blur(14px);
+}
+
+/* 强对比边框 */
+.mode-card:hover,
+.metric-card:hover,
+.output-item:hover,
+.analysis-step:hover {
+  border-color: color-mix(in srgb, var(--k-secondary) 52%, white 10%);
+}
+
+/* 主要按钮 */
+.primary-button {
+  color: var(--button-text);
+  background: var(--button-bg);
+  border: none;
+  box-shadow:
+    0 10px 30px var(--glow-primary),
+    0 0 30px var(--glow-secondary);
+}
+
+/* 次要按钮 */
+.outline-button,
+.back-button {
+  color: var(--button-outline-text);
+  background: var(--button-outline-bg);
+  border: 1px solid var(--button-outline-border);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.02) inset;
+}
+
+/* 输入框 / 下拉框 */
+input,
+textarea,
+select,
+#emotion-select {
+  color: var(--text-strong);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+}
+
+/* 链接或强调文字 */
+a,
+.highlight-text,
+strong.color-accent {
+  color: var(--k-secondary);
+}
+
+/* 数据高亮 */
+.confidence-box strong,
+.network-readout strong,
+.output-item strong,
+.visual-caption strong {
+  color: var(--text-strong);
+}
+
+/* 小型彩色状态点 */
+.status-dot,
+.signal-dot {
+  background:
+    radial-gradient(circle, var(--k-secondary) 0%, var(--k-primary) 72%);
+  box-shadow:
+    0 0 12px var(--glow-secondary),
+    0 0 20px var(--glow-primary);
+}
+
+/* 可视化容器氛围 */
+.hero-sculpture,
+.material-sculpture,
+.portrait-sculpture,
+.sculpture-stage,
+.material-visual,
+.visual-panel,
+.saved-visual,
+.sculpt-stage-panel {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255,255,255,0.02) 0%, transparent 58%),
+    radial-gradient(circle at 50% 50%, var(--glow-primary) 0%, transparent 24%),
+    radial-gradient(circle at 34% 28%, var(--glow-secondary) 0%, transparent 24%),
+    radial-gradient(circle at 72% 64%, var(--glow-accent) 0%, transparent 26%);
+}
+
+/* 标题中可用于局部高亮 */
+.kaleido-accent {
+  background:
+    linear-gradient(
+      90deg,
+      var(--k-secondary) 0%,
+      var(--k-accent) 30%,
+      var(--k-tertiary) 68%,
+      var(--k-primary) 100%
+    );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* =========================================================
+   粒子万花筒容器
+   ========================================================= */
+
+.hero-sculpture,
+.material-sculpture,
+.portrait-sculpture,
+.sculpture-stage {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 580px;
+  overflow: hidden;
+  place-items: center;
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(255, 57, 83, 0.12),
+      transparent 25%
+    ),
+    radial-gradient(
+      circle at 28% 24%,
+      rgba(36, 224, 255, 0.14),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 74% 70%,
+      rgba(174, 71, 255, 0.12),
+      transparent 35%
+    ),
+    #040507;
+}
+
+.hero-sculpture canvas,
+.material-sculpture canvas,
+.portrait-sculpture canvas,
+.sculpture-stage canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+@media (max-width: 1100px) {
+  .hero-sculpture,
+  .material-sculpture,
+  .portrait-sculpture,
+  .sculpture-stage {
+    min-height: 500px;
+  }
+}
+
+@media (max-width: 760px) {
+  .hero-sculpture,
+  .material-sculpture,
+  .portrait-sculpture,
+  .sculpture-stage {
+    min-height: 420px;
+  }
+}

@@ -1,111 +1,222 @@
 import * as THREE from 'three'
 
-/**
- * SoundClay Diamond Sculpture
- *
- * 调整物体大小时，只需要修改 RESPONSIVE_SCALE。
- * 桌面端建议保持在 0.52–0.62 之间。
- */
-const RESPONSIVE_SCALE = {
-  desktop: 0.52,
-  tablet: 0.52,
-  mobile: 0.46,
+/* =========================================================
+   SoundClay 简单粒子万花筒
+   基于 THREE.Points + BufferGeometry
+
+   调节重点：
+   SIDES：万花筒对称轴数量
+   BASE_PARTICLES：每个基础扇区的粒子数量
+   MAX_RADIUS：图案半径
+   POINT_SIZE：粒子大小
+   ========================================================= */
+
+const CONFIG = {
+  sides: 10,
+  baseParticles: 95,
+  maxRadius: 2.35,
+  pointSize: 0.075,
+
+  desktopScale: 0.92,
+  tabletScale: 0.82,
+  mobileScale: 0.72,
 }
 
 function getResponsiveScale(width) {
   if (width <= 640) {
-    return RESPONSIVE_SCALE.mobile
+    return CONFIG.mobileScale
   }
 
   if (width <= 1100) {
-    return RESPONSIVE_SCALE.tablet
+    return CONFIG.tabletScale
   }
 
-  return RESPONSIVE_SCALE.desktop
+  return CONFIG.desktopScale
 }
 
 /**
- * 创建接近参考图的水滴形切面钻石。
+ * 创建圆形发光粒子贴图。
  */
-function createDiamondGeometry() {
-  const geometry = new THREE.IcosahedronGeometry(1.42, 2)
-  const position = geometry.attributes.position
+function createParticleTexture() {
+  const size = 128
+  const canvas = document.createElement('canvas')
 
-  for (let index = 0; index < position.count; index += 1) {
-    const x = position.getX(index)
-    const y = position.getY(index)
-    const z = position.getZ(index)
+  canvas.width = size
+  canvas.height = size
 
-    /*
-     * y 大致处于 -1.42 到 1.42。
-     * 将它归一化到 0–1，用于控制顶部收尖和底部扩张。
-     */
-    const normalizedY = (y + 1.42) / 2.84
+  const context = canvas.getContext('2d')
 
-    let horizontalScale = 1
-
-    /*
-     * 顶部逐渐收尖，形成参考图中的水滴尖端。
-     */
-    if (normalizedY > 0.56) {
-      const topProgress = (normalizedY - 0.56) / 0.44
-
-      horizontalScale = THREE.MathUtils.lerp(
-        1,
-        0.12,
-        topProgress,
-      )
-    }
-
-    /*
-     * 底部略微收紧，但保留圆润主体。
-     */
-    if (normalizedY < 0.18) {
-      const bottomProgress = normalizedY / 0.18
-
-      horizontalScale *= THREE.MathUtils.lerp(
-        0.62,
-        1,
-        bottomProgress,
-      )
-    }
-
-    /*
-     * 中下部略微扩张，让主体不是普通锥形。
-     */
-    const bodyExpansion =
-      1 +
-      Math.sin(normalizedY * Math.PI) * 0.13
-
-    horizontalScale *= bodyExpansion
-
-    position.setXYZ(
-      index,
-      x * horizontalScale,
-      y * 1.18,
-      z * horizontalScale * 0.88,
-    )
+  if (!context) {
+    throw new Error('无法创建粒子 Canvas 纹理')
   }
 
-  geometry.computeVertexNormals()
-  geometry.computeBoundingSphere()
+  const gradient = context.createRadialGradient(
+    size / 2,
+    size / 2,
+    0,
+    size / 2,
+    size / 2,
+    size / 2,
+  )
 
-  return geometry
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)')
+  gradient.addColorStop(0.18, 'rgba(255, 255, 255, 0.95)')
+  gradient.addColorStop(0.45, 'rgba(255, 255, 255, 0.42)')
+  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+
+  context.fillStyle = gradient
+  context.fillRect(0, 0, size, size)
+
+  const texture = new THREE.CanvasTexture(canvas)
+
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.needsUpdate = true
+
+  return texture
 }
 
 /**
- * 创建漂浮的小型切面碎片。
+ * 让数字稳定地生成伪随机结果。
+ * 避免每次页面刷新图案完全不同。
  */
-function createShardGeometry() {
-  const geometry = new THREE.TetrahedronGeometry(0.18, 0)
-  geometry.computeVertexNormals()
+function seededRandom(seed) {
+  const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453
 
-  return geometry
+  return value - Math.floor(value)
 }
 
-export function initSculpture(container, mode = 'express') {
-  if (!container) {
-    console.warn('SoundClay: 未找到 3D 容器')
+/**
+ * 创建万花筒粒子数据。
+ *
+ * 先在一个小扇区里生成基础粒子，
+ * 再把每个粒子镜像复制到所有对称轴。
+ */
+function createKaleidoscopeData() {
+  const copiesPerParticle = CONFIG.sides * 2
+  const totalParticles =
+    CONFIG.baseParticles * copiesPerParticle
+
+  const positions = new Float32Array(totalParticles * 3)
+  const colors = new Float32Array(totalParticles * 3)
+
+  const baseRadii = new Float32Array(totalParticles)
+  const baseAngles = new Float32Array(totalParticles)
+  const baseDepths = new Float32Array(totalParticles)
+  const phases = new Float32Array(totalParticles)
+  const hueOffsets = new Float32Array(totalParticles)
+  const sizeFactors = new Float32Array(totalParticles)
+
+  const sectorAngle = (Math.PI * 2) / CONFIG.sides
+  const halfSector = sectorAngle / 2
+
+  let particleIndex = 0
+
+  for (
+    let baseIndex = 0;
+    baseIndex < CONFIG.baseParticles;
+    baseIndex += 1
+  ) {
+    /*
+     * sqrt 让中心不会聚集太多粒子，
+     * 整体分布更均匀。
+     */
+    const radiusRandom = seededRandom(baseIndex + 1)
+    const radius =
+      0.16 +
+      Math.sqrt(radiusRandom) *
+        (CONFIG.maxRadius - 0.16)
+
+    const localAngle =
+      seededRandom(baseIndex + 200) * halfSector
+
+    const depth =
+      (seededRandom(baseIndex + 400) - 0.5) * 0.55
+
+    const phase =
+      seededRandom(baseIndex + 600) * Math.PI * 2
+
+    const baseHue = seededRandom(baseIndex + 800)
+
+    const sizeFactor =
+      0.72 + seededRandom(baseIndex + 1000) * 0.7
+
+    for (
+      let sector = 0;
+      sector < CONFIG.sides;
+      sector += 1
+    ) {
+      const sectorCenter = sector * sectorAngle
+
+      for (let mirror = 0; mirror < 2; mirror += 1) {
+        const mirroredAngle =
+          sectorCenter +
+          (mirror === 0 ? localAngle : -localAngle)
+
+        const arrayIndex = particleIndex * 3
+
+        positions[arrayIndex] =
+          Math.cos(mirroredAngle) * radius
+
+        positions[arrayIndex + 1] =
+          Math.sin(mirroredAngle) * radius
+
+        positions[arrayIndex + 2] = depth
+
+        /*
+         * 初始颜色。
+         * 动画中还会持续更新。
+         */
+        const color = new THREE.Color()
+
+        color.setHSL(
+          (baseHue + sector / CONFIG.sides) % 1,
+          0.92,
+          0.62,
+        )
+
+        colors[arrayIndex] = color.r
+        colors[arrayIndex + 1] = color.g
+        colors[arrayIndex + 2] = color.b
+
+        baseRadii[particleIndex] = radius
+        baseAngles[particleIndex] = mirroredAngle
+        baseDepths[particleIndex] = depth
+        phases[particleIndex] = phase
+        hueOffsets[particleIndex] =
+          (baseHue + sector / CONFIG.sides) % 1
+        sizeFactors[particleIndex] = sizeFactor
+
+        particleIndex += 1
+      }
+    }
+  }
+
+  return {
+    totalParticles,
+    positions,
+    colors,
+    baseRadii,
+    baseAngles,
+    baseDepths,
+    phases,
+    hueOffsets,
+    sizeFactors,
+  }
+}
+
+/**
+ * 初始化粒子万花筒。
+ *
+ * @param {HTMLElement} container
+ * @param {'express' | 'soothe'} mode
+ * @returns {() => void}
+ */
+export function initSculpture(
+  container,
+  mode = 'express',
+) {
+  if (!(container instanceof HTMLElement)) {
+    console.error('SoundClay：没有找到有效的 3D 容器')
     return () => {}
   }
 
@@ -113,18 +224,15 @@ export function initSculpture(container, mode = 'express') {
 
   const scene = new THREE.Scene()
 
-  /*
-   * 相机距离增大，是钻石缩小并居中的关键。
-   */
   const camera = new THREE.PerspectiveCamera(
-    29,
+    36,
     Math.max(container.clientWidth, 1) /
       Math.max(container.clientHeight, 1),
     0.1,
     100,
   )
 
-  camera.position.set(0, 0.02, 7.6)
+  camera.position.set(0, 0, 6.8)
   camera.lookAt(0, 0, 0)
 
   const renderer = new THREE.WebGLRenderer({
@@ -137,371 +245,153 @@ export function initSculpture(container, mode = 'express') {
     Math.min(window.devicePixelRatio || 1, 2),
   )
 
-  renderer.setSize(
-    Math.max(container.clientWidth, 1),
-    Math.max(container.clientHeight, 1),
-    false,
-  )
+  renderer.setClearColor(0x000000, 0)
 
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = isExpress ? 1.08 : 1
+  renderer.toneMappingExposure = isExpress ? 1.35 : 1.05
 
-  renderer.setClearColor(0x000000, 0)
-
-  /*
-   * 避免热更新时出现多个 canvas。
-   */
   container.replaceChildren(renderer.domElement)
 
-  const sculptureGroup = new THREE.Group()
+  const kaleidoscopeGroup = new THREE.Group()
 
-  /*
-   * 整体位置固定在画布中心。
-   * y 轻微下移，让尖端和底部视觉上更加平衡。
-   */
-  sculptureGroup.position.set(0, -0.06, 0)
+  kaleidoscopeGroup.position.set(0, 0, 0)
 
-  scene.add(sculptureGroup)
+  scene.add(kaleidoscopeGroup)
 
-  const diamondGeometry = createDiamondGeometry()
+  const particleData = createKaleidoscopeData()
 
-  /*
-   * 主体：深黑色金属与玻璃质感。
-   */
-  const diamondMaterial = new THREE.MeshPhysicalMaterial({
-    color: isExpress ? 0x030406 : 0x171323,
-    metalness: isExpress ? 0.92 : 0.55,
-    roughness: isExpress ? 0.17 : 0.28,
-    clearcoat: 1,
-    clearcoatRoughness: 0.08,
-    reflectivity: 1,
-    transmission: isExpress ? 0.035 : 0.1,
-    thickness: 0.65,
-    flatShading: true,
+  const geometry = new THREE.BufferGeometry()
 
-    emissive: isExpress ? 0x010204 : 0x090614,
-    emissiveIntensity: 0.3,
-  })
-
-  const diamond = new THREE.Mesh(
-    diamondGeometry,
-    diamondMaterial,
-  )
-
-  diamond.rotation.set(
-    THREE.MathUtils.degToRad(-2),
-    THREE.MathUtils.degToRad(10),
-    THREE.MathUtils.degToRad(-3),
-  )
-
-  sculptureGroup.add(diamond)
-
-  /*
-   * 内部深色核心，提高层次。
-   */
-  const innerGeometry = createDiamondGeometry()
-
-  const innerMaterial = new THREE.MeshPhysicalMaterial({
-    color: isExpress ? 0x080a0f : 0x31264c,
-    metalness: 0.78,
-    roughness: 0.24,
-    clearcoat: 0.92,
-    clearcoatRoughness: 0.12,
-    flatShading: true,
-
-    emissive: isExpress ? 0x02040a : 0x10081f,
-    emissiveIntensity: 0.44,
-  })
-
-  const innerDiamond = new THREE.Mesh(
-    innerGeometry,
-    innerMaterial,
-  )
-
-  innerDiamond.scale.setScalar(0.78)
-  innerDiamond.rotation.y = -0.22
-
-  sculptureGroup.add(innerDiamond)
-
-  /*
-   * 很淡的切面线框。
-   * 不再像旧版本一样形成巨大的外部网格。
-   */
-  const outlineMaterial = new THREE.MeshBasicMaterial({
-    color: isExpress ? 0x8190ad : 0xa896ce,
-    wireframe: true,
-    transparent: true,
-    opacity: isExpress ? 0.075 : 0.1,
-    depthWrite: false,
-  })
-
-  const outline = new THREE.Mesh(
-    diamondGeometry,
-    outlineMaterial,
-  )
-
-  outline.scale.setScalar(1.008)
-
-  sculptureGroup.add(outline)
-
-  /*
-   * 前方的高亮切面。
-   */
-  const highlightGeometry = new THREE.TetrahedronGeometry(
-    0.42,
-    0,
-  )
-
-  const silverMaterial = new THREE.MeshPhysicalMaterial({
-    color: 0xd9dee8,
-    metalness: 0.8,
-    roughness: 0.1,
-    clearcoat: 1,
-    clearcoatRoughness: 0.04,
-    flatShading: true,
-  })
-
-  const blueMaterial = new THREE.MeshPhysicalMaterial({
-    color: isExpress ? 0x819be4 : 0xa694e8,
-    metalness: 0.68,
-    roughness: 0.14,
-    clearcoat: 1,
-    flatShading: true,
-  })
-
-  const redMaterial = new THREE.MeshPhysicalMaterial({
-    color: isExpress ? 0x5c0807 : 0x37626d,
-    metalness: 0.58,
-    roughness: 0.18,
-    clearcoat: 1,
-    emissive: isExpress ? 0x390000 : 0x123d42,
-    emissiveIntensity: 0.48,
-    flatShading: true,
-  })
-
-  const highlights = [
-    {
-      material: silverMaterial,
-      position: [0.42, 0.32, 1.09],
-      scale: [0.7, 1.9, 0.72],
-      rotation: [0.24, -0.25, -0.5],
-    },
-    {
-      material: blueMaterial,
-      position: [-0.62, 0.82, 0.86],
-      scale: [0.58, 1.18, 0.58],
-      rotation: [0.2, 0.4, 0.7],
-    },
-    {
-      material: redMaterial,
-      position: [0.54, -0.66, 0.88],
-      scale: [0.74, 1.42, 0.7],
-      rotation: [0.28, -0.32, 0.52],
-    },
-  ]
-
-  const highlightMeshes = highlights.map((config) => {
-    const mesh = new THREE.Mesh(
-      highlightGeometry,
-      config.material,
-    )
-
-    mesh.position.set(...config.position)
-    mesh.scale.set(...config.scale)
-    mesh.rotation.set(...config.rotation)
-
-    sculptureGroup.add(mesh)
-
-    return mesh
-  })
-
-  /*
-   * 外部碎片。
-   * 半径缩小，防止画面显得过满。
-   */
-  const shardGeometry = createShardGeometry()
-
-  const darkShardMaterial =
-    new THREE.MeshPhysicalMaterial({
-      color: 0x050608,
-      metalness: 0.9,
-      roughness: 0.14,
-      clearcoat: 1,
-      flatShading: true,
-    })
-
-  const lightShardMaterial =
-    new THREE.MeshPhysicalMaterial({
-      color: isExpress ? 0x9db2e9 : 0xb4a2e4,
-      metalness: 0.76,
-      roughness: 0.13,
-      clearcoat: 1,
-      flatShading: true,
-    })
-
-  const shards = []
-
-  const shardConfigs = [
-    [-1.48, 0.76, -0.15, 0.68],
-    [1.5, 0.54, -0.05, 0.76],
-    [-1.62, -0.46, 0.08, 0.56],
-    [1.46, -0.84, 0.12, 0.62],
-    [-0.96, 1.36, -0.2, 0.46],
-    [0.98, -1.34, -0.12, 0.44],
-    [-1.32, -1.1, -0.22, 0.38],
-    [1.34, 1.12, -0.15, 0.42],
-  ]
-
-  shardConfigs.forEach((config, index) => {
-    const [x, y, z, scale] = config
-
-    const mesh = new THREE.Mesh(
-      shardGeometry,
-      index % 3 === 0
-        ? lightShardMaterial
-        : darkShardMaterial,
-    )
-
-    mesh.position.set(x, y, z)
-
-    mesh.scale.set(
-      scale * 0.66,
-      scale * 1.28,
-      scale * 0.72,
-    )
-
-    mesh.rotation.set(
-      index * 0.33,
-      index * 0.64,
-      index * 0.27,
-    )
-
-    mesh.userData.baseY = y
-    mesh.userData.phase = index * 0.72
-
-    sculptureGroup.add(mesh)
-    shards.push(mesh)
-  })
-
-  /*
-   * 少量粒子，不形成巨大光圈。
-   */
-  const particleCount = 46
-  const particlePositions = new Float32Array(
-    particleCount * 3,
-  )
-
-  for (
-    let index = 0;
-    index < particleCount;
-    index += 1
-  ) {
-    const angle = index * 2.399
-    const radius = 1.7 + (index % 5) * 0.11
-    const y = -1.45 + (index % 14) * 0.22
-
-    particlePositions[index * 3] =
-      Math.cos(angle) * radius
-
-    particlePositions[index * 3 + 1] = y
-
-    particlePositions[index * 3 + 2] =
-      Math.sin(angle) * radius * 0.55
-  }
-
-  const particleGeometry = new THREE.BufferGeometry()
-
-  particleGeometry.setAttribute(
-    'position',
+  const positionAttribute =
     new THREE.BufferAttribute(
-      particlePositions,
+      particleData.positions,
       3,
-    ),
+    )
+
+  const colorAttribute =
+    new THREE.BufferAttribute(
+      particleData.colors,
+      3,
+    )
+
+  /*
+   * 每一帧都会修改位置和颜色。
+   */
+  positionAttribute.setUsage(
+    THREE.DynamicDrawUsage,
   )
 
-  const particleMaterial = new THREE.PointsMaterial({
-    color: isExpress ? 0x8ea5dc : 0xa595db,
-    size: 0.018,
+  colorAttribute.setUsage(
+    THREE.DynamicDrawUsage,
+  )
+
+  geometry.setAttribute(
+    'position',
+    positionAttribute,
+  )
+
+  geometry.setAttribute(
+    'color',
+    colorAttribute,
+  )
+
+  /*
+   * 避免动态粒子因为包围盒变化被错误裁切。
+   */
+  geometry.boundingSphere = new THREE.Sphere(
+    new THREE.Vector3(0, 0, 0),
+    CONFIG.maxRadius * 2,
+  )
+
+  const particleTexture = createParticleTexture()
+
+  const material = new THREE.PointsMaterial({
+    size: CONFIG.pointSize,
+    map: particleTexture,
+    vertexColors: true,
     transparent: true,
-    opacity: 0.38,
+    opacity: isExpress ? 0.96 : 0.82,
+    alphaTest: 0.015,
     depthWrite: false,
+    sizeAttenuation: true,
+    blending: THREE.AdditiveBlending,
   })
 
   const particles = new THREE.Points(
-    particleGeometry,
-    particleMaterial,
+    geometry,
+    material,
   )
 
-  sculptureGroup.add(particles)
+  kaleidoscopeGroup.add(particles)
 
   /*
-   * 灯光。
+   * 中心光点。
    */
-  const ambientLight = new THREE.AmbientLight(
-    isExpress ? 0x525967 : 0x776a99,
-    isExpress ? 0.68 : 0.88,
+  const centerMaterial = new THREE.SpriteMaterial({
+    map: particleTexture,
+    color: isExpress ? 0xffffff : 0xc9c3ff,
+    transparent: true,
+    opacity: isExpress ? 0.9 : 0.65,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+
+  const centerGlow = new THREE.Sprite(
+    centerMaterial,
   )
 
-  scene.add(ambientLight)
+  centerGlow.scale.set(0.75, 0.75, 1)
 
-  const frontLight = new THREE.DirectionalLight(
-    0xf7f8fc,
-    isExpress ? 5.8 : 4.6,
-  )
-
-  frontLight.position.set(3.8, 4.8, 5.4)
-  scene.add(frontLight)
-
-  const leftBlueLight = new THREE.PointLight(
-    isExpress ? 0x668dff : 0x9880ff,
-    isExpress ? 17 : 13,
-    12,
-  )
-
-  leftBlueLight.position.set(-3.6, 0.6, 3.6)
-  scene.add(leftBlueLight)
-
-  const rightRedLight = new THREE.PointLight(
-    isExpress ? 0xff2a18 : 0x62ced3,
-    isExpress ? 8.5 : 7,
-    10,
-  )
-
-  rightRedLight.position.set(3.4, -1.4, 2.6)
-  scene.add(rightRedLight)
-
-  const bottomLight = new THREE.PointLight(
-    0xffffff,
-    3.8,
-    9,
-  )
-
-  bottomLight.position.set(0, -3.2, 2)
-  scene.add(bottomLight)
+  kaleidoscopeGroup.add(centerGlow)
 
   /*
-   * 动画状态。
+   * 第二层柔光，用来增加万花筒中心深度。
    */
+  const softGlowMaterial =
+    new THREE.SpriteMaterial({
+      map: particleTexture,
+      color: isExpress ? 0xff4f50 : 0x8d82ff,
+      transparent: true,
+      opacity: isExpress ? 0.25 : 0.2,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+
+  const softGlow = new THREE.Sprite(
+    softGlowMaterial,
+  )
+
+  softGlow.scale.set(1.7, 1.7, 1)
+  softGlow.position.z = -0.3
+
+  kaleidoscopeGroup.add(softGlow)
+
   const clock = new THREE.Clock()
+
+  const workingColor = new THREE.Color()
 
   let animationFrame = 0
 
   let pointerTargetX = 0
   let pointerTargetY = 0
 
-  let currentPointerX = 0
-  let currentPointerY = 0
+  let pointerX = 0
+  let pointerY = 0
 
-  function updateResponsiveScale() {
-    const width = Math.max(
-      container.clientWidth,
-      1,
+  let hueTarget = 0
+  let hueShift = 0
+
+  let burstTarget = 0
+  let burst = 0
+
+  let gestureEnergyTarget = 0.35
+  let gestureEnergy = 0.35
+
+  function getScale() {
+    return getResponsiveScale(
+      Math.max(container.clientWidth, 1),
     )
-
-    const scale = getResponsiveScale(width)
-
-    sculptureGroup.scale.setScalar(scale)
   }
 
   function handlePointerMove(event) {
@@ -524,15 +414,83 @@ export function initSculpture(container, mode = 'express') {
       1
 
     /*
-     * 控制幅度很小，保证钻石始终留在中央。
+     * 左右移动：扭曲万花筒。
+     * 上下移动：改变颜色。
      */
-    pointerTargetY = normalizedX * 0.12
-    pointerTargetX = normalizedY * 0.07
+    pointerTargetY = normalizedX * 0.38
+    pointerTargetX = normalizedY * 0.16
+    hueTarget = normalizedY * 0.15
+    gestureEnergyTarget =
+      0.35 + Math.abs(normalizedX) * 0.65
   }
 
   function handlePointerLeave() {
     pointerTargetX = 0
     pointerTargetY = 0
+    hueTarget = 0
+    gestureEnergyTarget = 0.35
+  }
+
+  function handlePointerDown() {
+    /*
+     * 点击触发粒子爆散。
+     */
+    burstTarget = 1
+  }
+
+  /**
+   * 后续戒指接入时，可发送这个自定义事件：
+   *
+   * window.dispatchEvent(
+   *   new CustomEvent('soundclay:gesture', {
+   *     detail: {
+   *       type: 'swipe',
+   *       strength: 1,
+   *     },
+   *   }),
+   * )
+   */
+  function handleGesture(event) {
+    const detail = event.detail ?? {}
+    const type = detail.type ?? 'rotate'
+
+    const strength = THREE.MathUtils.clamp(
+      Number(detail.strength ?? 1),
+      0,
+      1.5,
+    )
+
+    switch (type) {
+      case 'rotate':
+        pointerTargetY += 0.25 * strength
+        hueTarget += 0.08 * strength
+        gestureEnergyTarget = 0.7 * strength
+        break
+
+      case 'swipe':
+        burstTarget = Math.max(
+          burstTarget,
+          strength,
+        )
+        hueTarget += 0.18
+        break
+
+      case 'tap':
+        burstTarget = Math.max(
+          burstTarget,
+          0.45 * strength,
+        )
+        hueTarget += 0.06
+        break
+
+      case 'hold':
+        gestureEnergyTarget = 0.12
+        hueTarget -= 0.08
+        break
+
+      default:
+        break
+    }
   }
 
   function resize() {
@@ -555,7 +513,9 @@ export function initSculpture(container, mode = 'express') {
       false,
     )
 
-    updateResponsiveScale()
+    kaleidoscopeGroup.scale.setScalar(
+      getScale(),
+    )
   }
 
   container.addEventListener(
@@ -568,7 +528,19 @@ export function initSculpture(container, mode = 'express') {
     handlePointerLeave,
   )
 
-  const resizeObserver = new ResizeObserver(resize)
+  container.addEventListener(
+    'pointerdown',
+    handlePointerDown,
+  )
+
+  window.addEventListener(
+    'soundclay:gesture',
+    handleGesture,
+  )
+
+  const resizeObserver = new ResizeObserver(
+    resize,
+  )
 
   resizeObserver.observe(container)
 
@@ -577,72 +549,182 @@ export function initSculpture(container, mode = 'express') {
   function animate() {
     const elapsed = clock.getElapsedTime()
 
-    currentPointerX +=
-      (pointerTargetX - currentPointerX) *
-      0.035
+    pointerX +=
+      (pointerTargetX - pointerX) * 0.045
 
-    currentPointerY +=
-      (pointerTargetY - currentPointerY) *
-      0.035
+    pointerY +=
+      (pointerTargetY - pointerY) * 0.045
 
-    sculptureGroup.rotation.x =
-      currentPointerX +
-      Math.sin(elapsed * 0.34) * 0.015
+    hueShift +=
+      (hueTarget - hueShift) * 0.025
 
-    sculptureGroup.rotation.y +=
-      isExpress ? 0.00115 : 0.0008
+    gestureEnergy +=
+      (gestureEnergyTarget - gestureEnergy) *
+      0.045
 
-    sculptureGroup.rotation.y +=
-      (currentPointerY -
-        sculptureGroup.rotation.y * 0.08) *
-      0.01
+    burst +=
+      (burstTarget - burst) * 0.18
+
+    burstTarget *= 0.88
+
+    const positionArray =
+      positionAttribute.array
+
+    const colorArray =
+      colorAttribute.array
+
+    const slowRotation =
+      elapsed * (isExpress ? 0.1 : 0.045)
+
+    for (
+      let index = 0;
+      index < particleData.totalParticles;
+      index += 1
+    ) {
+      const radius =
+        particleData.baseRadii[index]
+
+      const phase =
+        particleData.phases[index]
+
+      const radiusRatio =
+        radius / CONFIG.maxRadius
+
+      /*
+       * 保持所有镜像副本同步变化，
+       * 所以万花筒对称不会被破坏。
+       */
+      const breathing =
+        1 +
+        Math.sin(
+          elapsed *
+            (isExpress ? 1.55 : 0.85) +
+            phase,
+        ) *
+          (isExpress ? 0.065 : 0.035)
+
+      const burstOffset =
+        burst *
+        radiusRatio *
+        (0.45 + Math.sin(phase) * 0.14)
+
+      const animatedRadius =
+        radius * breathing + burstOffset
+
+      /*
+       * 越靠外围，扭曲程度越明显。
+       */
+      const twist =
+        pointerY * radiusRatio +
+        Math.sin(
+          elapsed * 0.42 +
+            radius * 2.4,
+        ) *
+          0.035 *
+          gestureEnergy
+
+      const angle =
+        particleData.baseAngles[index] +
+        slowRotation +
+        twist
+
+      const arrayIndex = index * 3
+
+      positionArray[arrayIndex] =
+        Math.cos(angle) * animatedRadius
+
+      positionArray[arrayIndex + 1] =
+        Math.sin(angle) * animatedRadius
+
+      positionArray[arrayIndex + 2] =
+        particleData.baseDepths[index] +
+        Math.sin(
+          elapsed * 0.75 + phase,
+        ) *
+          0.11
+
+      /*
+       * 张扬模式：高饱和彩色循环。
+       * 舒缓模式：降低饱和度和变化速度。
+       */
+      const hue =
+        (
+          particleData.hueOffsets[index] +
+          elapsed * (isExpress ? 0.035 : 0.012) +
+          hueShift +
+          burst * 0.08
+        ) % 1
+
+      const saturation = isExpress
+        ? 0.92
+        : 0.62
+
+      const lightness =
+        (isExpress ? 0.56 : 0.64) +
+        Math.sin(
+          elapsed * 1.2 + phase,
+        ) *
+          0.12 +
+        burst * 0.12
+
+      workingColor.setHSL(
+        hue < 0 ? hue + 1 : hue,
+        saturation,
+        THREE.MathUtils.clamp(
+          lightness,
+          0.35,
+          0.92,
+        ),
+      )
+
+      colorArray[arrayIndex] = workingColor.r
+      colorArray[arrayIndex + 1] =
+        workingColor.g
+      colorArray[arrayIndex + 2] =
+        workingColor.b
+    }
+
+    positionAttribute.needsUpdate = true
+    colorAttribute.needsUpdate = true
 
     /*
-     * 非常轻微的呼吸缩放。
+     * 整体跟随鼠标轻微倾斜。
      */
-    const baseScale = getResponsiveScale(
-      Math.max(container.clientWidth, 1),
+    kaleidoscopeGroup.rotation.x =
+      pointerX +
+      Math.sin(elapsed * 0.24) * 0.025
+
+    kaleidoscopeGroup.rotation.z =
+      Math.sin(elapsed * 0.17) * 0.02
+
+    const scale =
+      getScale() *
+      (
+        1 +
+        Math.sin(elapsed * 1.1) *
+          (isExpress ? 0.018 : 0.01) +
+        burst * 0.05
+      )
+
+    kaleidoscopeGroup.scale.setScalar(scale)
+
+    centerGlow.rotation.z = -elapsed * 0.2
+
+    centerGlow.scale.setScalar(
+      0.72 +
+        Math.sin(elapsed * 2.2) * 0.08 +
+        burst * 0.3,
     )
 
-    const breathing =
-      1 +
-      Math.sin(
-        elapsed *
-          (isExpress ? 1.5 : 1.05),
-      ) *
-        (isExpress ? 0.008 : 0.015)
-
-    sculptureGroup.scale.setScalar(
-      baseScale * breathing,
+    softGlow.scale.setScalar(
+      1.65 +
+        Math.sin(elapsed * 1.3) * 0.12 +
+        burst * 0.5,
     )
 
-    innerDiamond.rotation.y =
-      -elapsed * 0.055
-
-    outline.rotation.y =
-      elapsed * 0.018
-
-    highlightMeshes.forEach(
-      (mesh, index) => {
-        mesh.rotation.y +=
-          0.00055 + index * 0.00008
-      },
-    )
-
-    shards.forEach((shard) => {
-      shard.position.y =
-        shard.userData.baseY +
-        Math.sin(
-          elapsed * 0.62 +
-            shard.userData.phase,
-        ) *
-          0.025
-
-      shard.rotation.y += 0.0008
-    })
-
-    particles.rotation.y =
-      -elapsed * 0.018
+    softGlowMaterial.opacity =
+      (isExpress ? 0.23 : 0.16) +
+      burst * 0.18
 
     renderer.render(scene, camera)
 
@@ -667,22 +749,23 @@ export function initSculpture(container, mode = 'express') {
       handlePointerLeave,
     )
 
-    diamondGeometry.dispose()
-    innerGeometry.dispose()
-    highlightGeometry.dispose()
-    shardGeometry.dispose()
-    particleGeometry.dispose()
+    container.removeEventListener(
+      'pointerdown',
+      handlePointerDown,
+    )
 
-    diamondMaterial.dispose()
-    innerMaterial.dispose()
-    outlineMaterial.dispose()
-    silverMaterial.dispose()
-    blueMaterial.dispose()
-    redMaterial.dispose()
-    darkShardMaterial.dispose()
-    lightShardMaterial.dispose()
-    particleMaterial.dispose()
+    window.removeEventListener(
+      'soundclay:gesture',
+      handleGesture,
+    )
 
+    geometry.dispose()
+    material.dispose()
+
+    centerMaterial.dispose()
+    softGlowMaterial.dispose()
+
+    particleTexture.dispose()
     renderer.dispose()
 
     if (
