@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-
+from stt_adapter import STTError, transcribe_audio
 from emotion_analyzer import analyze_emotion_local
 from event_bus import EventBus
 from recipe_engine import build_recipe
@@ -77,7 +77,67 @@ async def get_status() -> dict:
 async def get_current_session() -> SessionState:
     return session
 
+@app.post("/api/stt/transcribe")
+async def transcribe_original_audio() -> dict:
+    if not ORIGINAL_AUDIO.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="找不到 backend/audio/original.wav",
+        )
 
+    session.phase = Phase.UNDERSTANDING
+    session.last_error = None
+
+    await publish(
+        "status",
+        {
+            "phase": session.phase,
+            "message": "Understanding your voice",
+        },
+    )
+
+    try:
+        transcript = await transcribe_audio(ORIGINAL_AUDIO)
+    except STTError as exc:
+        session.last_error = str(exc)
+
+        await publish(
+            "error",
+            {
+                "code": "STT_FAILED",
+                "message": str(exc),
+            },
+        )
+
+        raise HTTPException(
+            status_code=502,
+            detail=str(exc),
+        ) from exc
+
+    session.transcript = transcript
+
+    await publish(
+        "transcript_ready",
+        {
+            "transcript": transcript,
+        },
+    )
+
+    result = analyze_emotion_local(transcript)
+
+    session.emotion = result.emotion
+    session.confidence = result.confidence
+    session.reason = result.reason
+    session.phase = Phase.EMOTION_REVIEW
+
+    payload = {
+        "transcript": transcript,
+        **result.model_dump(mode="json"),
+    }
+
+    await publish("emotion_ready", payload)
+
+    return payload
 @app.post("/api/mock/transcript")
 async def mock_transcript(body: TranscriptRequest) -> dict:
     session.phase = Phase.UNDERSTANDING
