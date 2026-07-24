@@ -6,4 +6,5 @@ aiofiles>=24.1
 numpy>=2.0
 soundfile>=0.12
 faster-whisper>=1.1,<2
+bleak==3.0.2
 pytest>=8.0

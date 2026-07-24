@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 import emotion_adapter
 import server
 from event_bus import EventBus
-from ring_integration import RingRuntimeManager
+from ring_integration import RingRuntimeManager, resolve_ring_ffmpeg_path
 from ring_protocol import RingEventGuard, RingProtocolError, normalize_ring_event
 from schemas import SessionState
 
@@ -78,6 +78,44 @@ def test_protocol_preserves_signed_twist_and_accepts_session_alias() -> None:
     assert message["payload"]["sessionId"] == "SC-001"
     assert message["payload"]["twist"] == pytest.approx(-0.72)
     assert message["payload"]["gyroZ"] == pytest.approx(-92.4)
+
+
+def test_protocol_accepts_real_ab_status_and_preserves_diagnostics() -> None:
+    message = normalize_ring_event(
+        {
+            "type": "status",
+            "timestamp": 1720000000000,
+            "payload": {
+                "sessionId": "SC-001",
+                "ringConnected": True,
+                "phase": "sculpting",
+                "modeHint": "gesture_verified",
+                "firmwareVersion": "0.3.4",
+                "batteryPercent": 82,
+                "batteryCharging": False,
+                "sampleRateHz": 100,
+                "accelRangeG": 16,
+                "gyroRangeDps": 2000,
+            },
+        }
+    )
+    payload = message["payload"]
+    assert payload["ringConnected"] is True
+    assert payload["connected"] is True
+    assert payload["firmwareVersion"] == "0.3.4"
+    assert payload["batteryPercent"] == pytest.approx(82)
+    assert payload["sampleRateHz"] == 100
+
+
+def test_protocol_rejects_session_ids_outside_ab_contract() -> None:
+    with pytest.raises(RingProtocolError, match="1-80 characters"):
+        normalize_ring_event(
+            {
+                "type": "imu",
+                "timestamp": 1,
+                "payload": {"sessionId": "SC invalid", "twist": 0.1},
+            }
+        )
 
 
 def test_protocol_rejects_nonfinite_motion() -> None:
@@ -168,6 +206,18 @@ def test_runtime_manager_owns_one_runtime_and_closes_cleanly() -> None:
     ]
 
 
+def test_ffmpeg_resolution_handles_stale_windows_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ffmpeg = tmp_path / "Programs" / "ffmpeg" / "bin" / "ffmpeg.exe"
+    ffmpeg.parent.mkdir(parents=True)
+    ffmpeg.write_bytes(b"stub")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("SOUNDCLAY_FFMPEG", "ffmpeg")
+    monkeypatch.setattr("ring_integration.shutil.which", lambda _: None)
+    assert resolve_ring_ffmpeg_path() == str(ffmpeg.resolve())
+
+
 def test_mock_ring_motion_is_session_scoped_signed_and_idempotent(ring_client) -> None:
     test_client, _ = ring_client
     status = {
@@ -243,3 +293,42 @@ def test_ring_status_is_disabled_by_default_and_session_route_is_recoverable(rin
     start = test_client.post("/api/ring/session/start")
     assert start.status_code == 409
     assert "disabled" in start.json()["detail"]
+
+
+def test_real_runtime_status_updates_manager_connection_state(ring_client) -> None:
+    _, _ = ring_client
+    manager = server.ring_manager
+    assert manager is not None
+    asyncio.run(
+        server._ingest_ring_event(
+            {
+                "type": "status",
+                "timestamp": 3000,
+                "payload": {
+                    "ringConnected": True,
+                    "phase": "sculpting",
+                    "modeHint": "gesture_verified",
+                },
+            },
+            source="ring_runtime",
+        )
+    )
+    assert manager.connected is True
+
+    asyncio.run(
+        server._ingest_ring_event(
+            {
+                "type": "error",
+                "timestamp": 3100,
+                "payload": {
+                    "code": "BLE_DISCONNECTED",
+                    "phase": "connection",
+                    "message": "ring disconnected",
+                    "recoverable": True,
+                },
+            },
+            source="ring_runtime",
+        )
+    )
+    assert manager.connected is False
+    assert server.ring_status["ringConnected"] is False

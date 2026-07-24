@@ -1,7 +1,7 @@
-{"type":"status","timestamp":1720000000000,"payload":{"sessionId":"SC-MOCK-001","phase":"connected","connected":true,"modeHint":"single_press_for_motion"}}
-{"type":"imu","timestamp":1720000000100,"payload":{"sessionId":"SC-MOCK-001","sequence":100,"deviceTimestampMs":123456,"twist":-0.72,"accelMag":0.18,"gyroZ":-92.4}}
-{"type":"imu","timestamp":1720000000200,"payload":{"sessionId":"SC-MOCK-001","sequence":101,"deviceTimestampMs":123556,"twist":0.42,"accelMag":0.31,"gyroZ":64.8}}
-{"type":"burst","timestamp":1720000000300,"payload":{"sessionId":"SC-MOCK-001","sequence":102,"strength":0.9,"source":"fast_swing"}}
-{"type":"burst","timestamp":1720000000300,"payload":{"sessionId":"SC-MOCK-001","sequence":102,"strength":0.9,"source":"fast_swing"}}
-{"type":"freeze","timestamp":1720000000400,"payload":{"sessionId":"SC-MOCK-001","sequence":103,"source":"key_double_press"}}
-{"type":"freeze","timestamp":1720000000400,"payload":{"sessionId":"SC-MOCK-001","sequence":103,"source":"key_double_press"}}
+{"type":"status","timestamp":1720000000000,"payload":{"sessionId":"SC-MOCK-001","ringConnected":true,"phase":"sculpting","modeHint":"gesture_verified","sampleRateHz":100,"accelRangeG":16,"gyroRangeDps":2000}}
+{"type":"imu","timestamp":1720000000100,"payload":{"sessionId":"SC-MOCK-001","sequence":100,"deviceTimestampMs":123456,"twist":-0.72,"accelMag":0.18,"accelX":0.08,"accelY":0.04,"accelZ":1.02,"gyroX":18.0,"gyroY":12.0,"gyroZ":-92.4,"gyroXY":21.633}}
+{"type":"imu","timestamp":1720000000200,"payload":{"sessionId":"SC-MOCK-001","sequence":101,"deviceTimestampMs":123556,"twist":0.42,"accelMag":0.31,"accelX":0.18,"accelY":0.12,"accelZ":1.05,"gyroX":32.0,"gyroY":21.0,"gyroZ":64.8,"gyroXY":38.275}}
+{"type":"burst","timestamp":1720000000300,"payload":{"sessionId":"SC-MOCK-001","strength":0.9}}
+{"type":"burst","timestamp":1720000000300,"payload":{"sessionId":"SC-MOCK-001","strength":0.9}}
+{"type":"freeze","timestamp":1720000000400,"payload":{"sessionId":"SC-MOCK-001","source":"key_double_press","deviceTimestampMs":123756}}
+{"type":"freeze","timestamp":1720000000400,"payload":{"sessionId":"SC-MOCK-001","source":"key_double_press","deviceTimestampMs":123756}}

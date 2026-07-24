@@ -253,6 +253,7 @@ async def get_status() -> dict:
         "sessionRunning": False,
         "lastError": None,
         "runtimePath": None,
+        "ffmpegPath": None,
     }
     return {
         "ringConnected": manager_status["connected"],
@@ -813,6 +814,8 @@ async def _ingest_ring_event(raw: dict, *, source: str) -> dict:
     if event_type == "status":
         ring_status.update(payload)
         ring_status["enabled"] = bool(ring_manager and ring_manager.enabled)
+        if source == "ring_runtime" and ring_manager and "connected" in payload:
+            ring_manager.connected = payload["connected"]
         if "connected" not in payload and payload.get("phase") == "connected":
             ring_status["connected"] = True
         message = event("status", {**payload, "source": source}, timestamp=timestamp)
@@ -821,6 +824,11 @@ async def _ingest_ring_event(raw: dict, *, source: str) -> dict:
 
     if event_type == "error":
         ring_status["lastError"] = payload["message"]
+        if source == "ring_runtime" and payload.get("code") == "BLE_DISCONNECTED":
+            ring_status["connected"] = False
+            ring_status["ringConnected"] = False
+            if ring_manager:
+                ring_manager.connected = False
         session.last_error = payload["message"]
         _touch_session()
         message = event("error", {**payload, "source": source}, timestamp=timestamp)
@@ -861,6 +869,19 @@ async def _ingest_ring_event(raw: dict, *, source: str) -> dict:
                 "audio_ready",
                 {
                     "sessionId": payload.get("sessionId"),
+                    **{
+                        key: payload[key]
+                        for key in (
+                            "fileIndex",
+                            "durationMs",
+                            "recordTime",
+                            "recovered",
+                            "rmsDbfs",
+                            "speechActivityRatio",
+                            "warnings",
+                        )
+                        if key in payload
+                    },
                     "filename": metadata["filename"],
                     "bytes": metadata["bytes"],
                     "sampleRate": metadata["sampleRate"],
@@ -979,6 +1000,7 @@ async def get_ring_status() -> dict:
         "sessionRunning": False,
         "lastError": None,
         "runtimePath": None,
+        "ffmpegPath": None,
     }
     return {**ring_status, **manager_status, "activeSessionId": active_ring_session_id}
 

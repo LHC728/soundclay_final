@@ -55,6 +55,9 @@ Backend variables:
 | `ABLETON_OSC_PORT` | `11000` | Ableton/Max for Live UDP receive port |
 | `SOUNDCLAY_RING_ENABLED` | `false` | Enables the single hardware `RingRuntime`; keep false for offline/mock testing |
 | `SOUNDCLAY_RING_PATH` | blank | Absolute local checkout containing AB's `ring_runtime.py` |
+| `SOUNDCLAY_RING_ADDRESS` | `FA:7E:92:E6:38:6D` | AB's default Zilo ring BLE address; override for another device |
+| `SOUNDCLAY_SESSION_ROOT` | `./runtime/sessions` | RingRuntime audio/event output, ignored by Git |
+| `SOUNDCLAY_FFMPEG` | `ffmpeg` | FFmpeg executable name or absolute path used by AB audio decoding |
 
 The faster-whisper model must already be cached or supplied as a local path for offline use. Model instances are cached in memory by model/device/compute configuration. Tests replace provider/model calls and never download a model.
 
@@ -136,9 +139,9 @@ Supported event types are `status`, `recording`, `audio_ready`, `transcript_read
 
 FastAPI owns exactly one optional `RingRuntime` for the process lifetime. Startup calls `connect()` and `get_status()`. A ring session calls `arm_recording(session_id)`, `enter_motion_mode(session_id)`, then `sculpt_until_freeze(session_id)` in sequence. Shutdown cancels an unfinished session before calling `runtime.close()`.
 
-The adapter accepts AB's `status`, `audio_ready`, `imu`, `burst`, `freeze`, and `error` events. Both `sessionId` and legacy `session_id` are accepted at ingress, then normalized to `sessionId`. Motion is isolated to the active AB session. `imu.twist` remains signed in `[-1, 1]`; only the optional Ableton adapter maps it to `[0, 1]`. Repeated or out-of-order IMU sequences, repeated bursts, and repeated freezes are idempotently ignored.
+The adapter accepts AB's `status`, `audio_ready`, `imu`, `burst`, `freeze`, and `error` events. Both `sessionId` and legacy `session_id` are accepted at ingress, then normalized to AB's 1-80 character identifier contract. Real status fields including `ringConnected`, `firmwareVersion`, `batteryPercent`, sensor ranges, reconnect attempts, and phase messages are preserved. Motion is isolated to the active AB session. `imu.twist` remains signed in `[-1, 1]`; only the optional Ableton adapter maps it to `[0, 1]`. Repeated or out-of-order IMU sequences, repeated bursts, and repeated freezes are idempotently ignored.
 
-`audio_ready.wavPath` must be an absolute existing local WAV path below the 50 MiB limit. The backend reads and validates it without moving or deleting AB's source file, atomically stores its own current WAV, computes real features, and launches local STT/emotion work outside the live motion loop.
+`audio_ready.wavPath` must be an absolute existing local WAV path below the 50 MiB limit. The backend reads and validates it without moving or deleting AB's source file, atomically stores its own current WAV, computes real features, and launches local STT/emotion work outside the live motion loop. On Windows, the manager also resolves `%LOCALAPPDATA%\Programs\ffmpeg\bin\ffmpeg.exe` when the current process has not yet inherited an updated user `PATH`.
 
 Hardware mode is deliberately disabled by default. To run the no-ring acceptance test, start FastAPI and replay the checked-in AB-shaped sample:
 
@@ -152,7 +155,7 @@ Only after mock acceptance should hardware mode be enabled in `backend/.env`:
 
 ```dotenv
 SOUNDCLAY_RING_ENABLED=true
-SOUNDCLAY_RING_PATH=C:\absolute\path\to\soundclay-ring
+SOUNDCLAY_RING_PATH=C:\Users\19662\Desktop\soundclay-ring\soundclay-ring-main
 ```
 
 Before real-ring acceptance, close the phone Zilo APK and any other BLE program, then start exactly one FastAPI/Python process. The local AB checkout and its hardware dependencies remain external to this repository.

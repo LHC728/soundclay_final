@@ -23,6 +23,7 @@ backend/audio/*.ogg
 
 # Generated works
 works/
+backend/runtime/
 
 # Logs and system files
 *.log

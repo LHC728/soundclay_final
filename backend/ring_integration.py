@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
+import shutil
 import sys
 import time
 from contextlib import suppress
@@ -11,6 +12,27 @@ from typing import Any, Awaitable, Callable
 
 
 EventSink = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+def resolve_ring_ffmpeg_path() -> str:
+    """Resolve FFmpeg for AB even when this process has a stale Windows PATH."""
+    configured = os.getenv("SOUNDCLAY_FFMPEG", "ffmpeg").strip() or "ffmpeg"
+    configured_path = Path(configured).expanduser()
+    if configured_path.is_file():
+        return str(configured_path.resolve())
+
+    discovered = shutil.which(configured)
+    if discovered:
+        return str(Path(discovered).resolve())
+
+    if configured.lower() not in {"ffmpeg", "ffmpeg.exe"}:
+        return configured
+    local_app_data = os.getenv("LOCALAPPDATA")
+    if local_app_data:
+        bundled_candidate = Path(local_app_data) / "Programs" / "ffmpeg" / "bin" / "ffmpeg.exe"
+        if bundled_candidate.is_file():
+            return str(bundled_candidate.resolve())
+    return configured
 
 
 def _enabled_from_environment() -> bool:
@@ -39,6 +61,7 @@ class RingRuntimeManager:
         self.runtime_path = runtime_path or os.getenv("SOUNDCLAY_RING_PATH")
         self.runtime: Any | None = None
         self.session_task: asyncio.Task[None] | None = None
+        self.ffmpeg_path = resolve_ring_ffmpeg_path()
         self.connected = False
         self.last_error: str | None = None
 
@@ -62,6 +85,7 @@ class RingRuntimeManager:
         if not self.enabled or self.runtime is not None:
             return
         try:
+            os.environ["SOUNDCLAY_FFMPEG"] = self.ffmpeg_path
             factory = self._load_runtime_factory()
             self.runtime = factory(event_sink=self.event_sink)
             await self.runtime.connect()
@@ -135,4 +159,5 @@ class RingRuntimeManager:
             "sessionRunning": bool(self.session_task and not self.session_task.done()),
             "lastError": self.last_error,
             "runtimePath": str(self.runtime_path) if self.runtime_path else None,
+            "ffmpegPath": self.ffmpeg_path,
         }
