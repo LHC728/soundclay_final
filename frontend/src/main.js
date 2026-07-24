@@ -2,11 +2,14 @@ import './style.css'
 import { createSculpture } from './sculpture.js'
 import { SoundClayAudio } from './audio.js'
 
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000'
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000/ws/ring'
 const app = document.querySelector('#app')
 
 app.innerHTML = `
   <main class="soundclay" data-state="idle">
     <p class="brand">SoundClay</p>
+    <div class="connection-status" id="connection-status" data-connection="connecting">正在连接后端</div>
 
     <section class="stage" aria-live="polite">
       <div class="visual" id="visual" aria-hidden="true"></div>
@@ -32,6 +35,7 @@ const interactionLayer = document.querySelector('#interaction-layer')
 const copy = document.querySelector('#copy')
 const controls = document.querySelector('#controls')
 const toast = document.querySelector('#toast')
+const connectionStatus = document.querySelector('#connection-status')
 const dots = [...document.querySelectorAll('.progress-dot')]
 
 const sculpture = createSculpture(visual)
@@ -56,6 +60,16 @@ let pointer = null
 let holdTimer = 0
 let isHolding = false
 let hintTimer = 0
+let socket = null
+let reconnectTimer = 0
+let reconnectDelay = 800
+let ringEnabled = false
+let ringConnected = false
+let ringFrozen = false
+let activeRingSessionId = null
+const freezeStateBySession = new Map()
+const seenDiscreteEvents = new Set()
+const discreteEventOrder = []
 
 const icons = {
   play: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></svg>`,
@@ -75,6 +89,153 @@ function setState(nextState) {
   sculpture.setState(state)
   setActiveDot()
   render()
+}
+
+function updateConnectionStatus(message, connection = 'offline') {
+  connectionStatus.textContent = message
+  connectionStatus.dataset.connection = connection
+}
+
+function eventSessionId(payload = {}) {
+  return payload.sessionId || payload.session_id || null
+}
+
+function resetRingEventState(sessionId = activeRingSessionId) {
+  activeRingSessionId = sessionId
+  ringFrozen = false
+  freezeStateBySession.clear()
+  seenDiscreteEvents.clear()
+  discreteEventOrder.length = 0
+}
+
+function acceptsRingSession(eventType, payload) {
+  const sessionId = eventSessionId(payload)
+  if (!sessionId) return true
+  if (!activeRingSessionId || sessionId === activeRingSessionId) {
+    activeRingSessionId = sessionId
+    return true
+  }
+
+  const phase = String(payload.phase || '').toLowerCase()
+  if (eventType === 'audio_ready' || (eventType === 'status' && ['connected', 'ready', 'recording'].includes(phase))) {
+    resetRingEventState(sessionId)
+    return true
+  }
+  return false
+}
+
+function rememberDiscreteEvent(eventType, timestamp, payload) {
+  const sessionId = eventSessionId(payload) || activeRingSessionId || 'unknown'
+  const discriminator = payload.sequence ?? timestamp
+  const key = `${sessionId}:${eventType}:${discriminator}`
+  if (seenDiscreteEvents.has(key)) return false
+  seenDiscreteEvents.add(key)
+  discreteEventOrder.push(key)
+  while (discreteEventOrder.length > 512) seenDiscreteEvents.delete(discreteEventOrder.shift())
+  return true
+}
+
+async function loadRingAudio(payload) {
+  const audioUrl = payload.audioUrl
+  if (!audioUrl) return
+  const resolved = new URL(audioUrl, `${API_BASE}/`).href
+  try {
+    await audio.loadUrl(`${resolved}?audio_id=${encodeURIComponent(payload.audio_id || '')}`)
+    setMode(0.5)
+    setState('mode')
+  } catch (error) {
+    showError(error instanceof Error ? error.message : '无法读取戒指录音。')
+  }
+}
+
+function handleSocketEvent(message) {
+  if (!message || typeof message !== 'object' || typeof message.type !== 'string') return
+  const payload = message.payload && typeof message.payload === 'object' ? message.payload : {}
+  if (!acceptsRingSession(message.type, payload)) return
+
+  switch (message.type) {
+    case 'status': {
+      if (typeof payload.ringEnabled === 'boolean') ringEnabled = payload.ringEnabled
+      if (typeof payload.ringConnected === 'boolean') ringConnected = payload.ringConnected
+      if (typeof payload.connected === 'boolean') ringConnected = payload.connected
+      if (payload.phase === 'connected') ringConnected = true
+      const label = ringConnected ? '戒指已连接' : ringEnabled ? '等待戒指' : '后端已连接 · 模拟模式'
+      updateConnectionStatus(label, ringConnected ? 'ring' : 'online')
+      break
+    }
+    case 'recording':
+      if (state === 'idle') setState('recording')
+      break
+    case 'audio_ready':
+      void loadRingAudio(payload)
+      break
+    case 'imu': {
+      if (state !== 'sculpt' || ringFrozen) break
+      const twist = Math.min(1, Math.max(-1, Number(payload.twist) || 0))
+      const energy = Math.min(1, Math.max(0, Number(payload.accelMag) || 0))
+      sculpture.setInteraction(twist, 1 - energy * 2)
+      audio.setMorph({ space: (twist + 1) / 2, energy })
+      break
+    }
+    case 'twist': {
+      if (state !== 'sculpt' || ringFrozen) break
+      const legacy = Math.min(1, Math.max(0, Number(payload.value) || 0))
+      const twist = legacy * 2 - 1
+      sculpture.setInteraction(twist, 0)
+      audio.setMorph({ space: legacy })
+      break
+    }
+    case 'burst':
+      if (state === 'sculpt' && !ringFrozen && rememberDiscreteEvent('burst', message.timestamp, payload)) {
+        sculpture.burst(Math.min(1, Math.max(0, Number(payload.strength) || 0)))
+        showToast('爆散')
+      }
+      break
+    case 'freeze': {
+      const sessionId = eventSessionId(payload) || activeRingSessionId || 'unknown'
+      const active = payload.active !== false
+      if (freezeStateBySession.get(sessionId) === active) break
+      freezeStateBySession.set(sessionId, active)
+      ringFrozen = active
+      sculpture.freeze(active)
+      if (active) audio.stopPlayback()
+      else audio.playLoop()
+      showToast(active ? '已凝固' : '继续流动')
+      break
+    }
+    case 'error':
+      updateConnectionStatus(payload.message || '戒指连接异常', 'error')
+      showToast(payload.recommendedAction || payload.message || '戒指连接异常')
+      break
+    default:
+      break
+  }
+}
+
+function connectRingSocket() {
+  if (socket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(socket.readyState)) return
+  updateConnectionStatus('正在连接后端', 'connecting')
+  socket = new WebSocket(WS_URL)
+  socket.addEventListener('open', () => {
+    reconnectDelay = 800
+    updateConnectionStatus('后端已连接 · 模拟模式', 'online')
+  })
+  socket.addEventListener('message', (event) => {
+    try {
+      handleSocketEvent(JSON.parse(event.data))
+    } catch {
+      updateConnectionStatus('收到无效事件', 'error')
+    }
+  })
+  socket.addEventListener('close', () => {
+    socket = null
+    ringConnected = false
+    updateConnectionStatus('后端离线 · 本地模式', 'offline')
+    clearTimeout(reconnectTimer)
+    reconnectTimer = window.setTimeout(connectRingSocket, reconnectDelay)
+    reconnectDelay = Math.min(8000, reconnectDelay * 1.7)
+  })
+  socket.addEventListener('error', () => socket?.close())
 }
 
 function modeName() {
@@ -112,13 +273,15 @@ function render() {
       <h1 class="title">正在聆听</h1>
       <p class="subtitle">声音越自由，材料越丰富。</p>
     `
-    controls.innerHTML = `
-      <button class="icon-button record-button" id="stop-button" aria-label="结束录音" data-recording="true">
-        <span class="record-dot"></span>
-      </button>
-      <div class="tiny-label" id="record-time">00:00</div>
-    `
-    document.querySelector('#stop-button').addEventListener('click', stopRecording)
+    controls.innerHTML = ringConnected
+      ? `<div class="ring-listening"><span class="ring-pulse"></span><span>请长按戒指说话</span></div>`
+      : `
+        <button class="icon-button record-button" id="stop-button" aria-label="结束录音" data-recording="true">
+          <span class="record-dot"></span>
+        </button>
+        <div class="tiny-label" id="record-time">00:00</div>
+      `
+    document.querySelector('#stop-button')?.addEventListener('click', stopRecording)
     updateRecordingTime()
     recordingTimer = window.setInterval(updateRecordingTime, 250)
     return
@@ -191,6 +354,16 @@ function render() {
 
 async function startRecording() {
   try {
+    if (ringConnected) {
+      const response = await fetch(`${API_BASE}/api/ring/session/start`, { method: 'POST' })
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}))
+        throw new Error(detail.detail || `无法启动戒指录音（HTTP ${response.status}）。`)
+      }
+      recordingStartedAt = performance.now()
+      setState('recording')
+      return
+    }
     await audio.startRecording()
     recordingStartedAt = performance.now()
     setState('recording')
@@ -235,9 +408,15 @@ function setMode(value) {
 
 function enterSculpt() {
   nodes = []
+  ringFrozen = false
   audio.setMode(mode)
   audio.playLoop()
   setState('sculpt')
+  void fetch(`${API_BASE}/api/mode/select`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ mode: mode < 0.5 ? 'express' : 'soothe' }),
+  }).catch(() => {})
 }
 
 function showToast(message = '已留下') {
@@ -248,6 +427,7 @@ function showToast(message = '已留下') {
 }
 
 function addNode() {
+  if (ringFrozen) return
   const progress = audio.duration > 0 && audio.context
     ? ((audio.context.currentTime - audio.startedAt) % audio.duration) / audio.duration
     : 0
@@ -316,6 +496,7 @@ function restart() {
   clearInterval(recordingTimer)
   audio.reset()
   nodes = []
+  resetRingEventState(null)
   mode = 0.5
   sculpture.setMode(mode)
   sculpture.setInteraction(0, 0)
@@ -341,7 +522,7 @@ function normalizedPointer(event) {
 }
 
 interactionLayer.addEventListener('pointerdown', (event) => {
-  if (!['mode', 'sculpt'].includes(state)) return
+  if (!['mode', 'sculpt'].includes(state) || (state === 'sculpt' && ringFrozen)) return
   interactionLayer.setPointerCapture(event.pointerId)
   const point = normalizedPointer(event)
   pointer = { id: event.pointerId, startX: event.clientX, startY: event.clientY, moved: false, point }
@@ -361,6 +542,7 @@ interactionLayer.addEventListener('pointerdown', (event) => {
 
 interactionLayer.addEventListener('pointermove', (event) => {
   if (!pointer || pointer.id !== event.pointerId) return
+  if (state === 'sculpt' && ringFrozen) return
   const point = normalizedPointer(event)
   const movedDistance = Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY)
   if (movedDistance > 7) pointer.moved = true
@@ -459,3 +641,9 @@ window.addEventListener('soundclay:gesture', (event) => {
 })
 
 setState('idle')
+connectRingSocket()
+
+window.addEventListener('beforeunload', () => {
+  clearTimeout(reconnectTimer)
+  socket?.close()
+})

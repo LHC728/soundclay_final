@@ -187,6 +187,19 @@ export class SoundClayAudio {
     return blob
   }
 
+  async loadUrl(url) {
+    const context = await this.ensureContext()
+    this.stopPlayback()
+    const response = await fetch(url, { cache: 'no-store' })
+    if (!response.ok) throw new Error(`无法读取戒指录音（HTTP ${response.status}）。`)
+    const data = await response.arrayBuffer()
+    this.buffer = await context.decodeAudioData(data.slice(0))
+    this.startOffset = 0
+    this.onLevel(0)
+    this.onProgress(0)
+    return this.buffer
+  }
+
   buildGraph(context, destination) {
     const input = context.createGain()
     const filter = context.createBiquadFilter()

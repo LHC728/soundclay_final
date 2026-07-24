@@ -6,6 +6,7 @@ import math
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
@@ -22,11 +23,14 @@ from ableton_adapter import status as ableton_status
 from emotion_adapter import analyze_emotion
 from event_bus import EventBus
 from recipe_engine import build_recipe
+from ring_integration import RingRuntimeManager
+from ring_protocol import RingEventGuard, RingProtocolError, normalize_ring_event
 from save_service import save_work
 from schemas import (
     AudioFeatures,
     Emotion,
     EmotionConfirmRequest,
+    EventMessage,
     ModeSelectRequest,
     Phase,
     SaveRequest,
@@ -46,7 +50,30 @@ ORIGINAL_AUDIO = AUDIO_DIR / "original.wav"
 OUTPUT_AUDIO = AUDIO_DIR / "output.wav"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
-app = FastAPI(title="SoundClay Emotion Backend", version="0.3.0")
+
+ring_manager: RingRuntimeManager | None = None
+ring_audio_tasks: set[asyncio.Task] = set()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    global ring_manager
+    manager = RingRuntimeManager(_handle_ring_runtime_event)
+    ring_manager = manager
+    await manager.start()
+    try:
+        yield
+    finally:
+        for task in list(ring_audio_tasks):
+            task.cancel()
+        for task in list(ring_audio_tasks):
+            with suppress(asyncio.CancelledError):
+                await task
+        await manager.close()
+        ring_manager = None
+
+
+app = FastAPI(title="SoundClay Emotion Backend", version="0.4.0", lifespan=lifespan)
 configured_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 app.add_middleware(
     CORSMiddleware,
@@ -66,6 +93,15 @@ app.mount("/works", StaticFiles(directory=WORKS_DIR), name="works")
 bus = EventBus()
 session = SessionState(session_id=str(uuid.uuid4()))
 audio_lock = asyncio.Lock()
+ring_event_guard = RingEventGuard()
+active_ring_session_id: str | None = None
+ring_status: dict = {
+    "enabled": False,
+    "connected": False,
+    "phase": "disabled",
+    "modeHint": "mock-controls-available",
+    "lastError": None,
+}
 
 
 def event(event_type: str, payload: dict, *, timestamp: int | None = None) -> dict:
@@ -211,10 +247,18 @@ async def health() -> dict:
 
 @app.get("/api/status")
 async def get_status() -> dict:
+    manager_status = ring_manager.status() if ring_manager else {
+        "enabled": False,
+        "connected": False,
+        "sessionRunning": False,
+        "lastError": None,
+        "runtimePath": None,
+    }
     return {
-        "ringConnected": False,
+        "ringConnected": manager_status["connected"],
+        "ring": {**ring_status, **manager_status},
         "phase": session.phase,
-        "modeHint": "mock-controls-available",
+        "modeHint": ring_status.get("modeHint", "mock-controls-available"),
         "lastError": session.last_error,
         "audioId": session.audio_id,
         "sessionId": session.session_id,
@@ -704,6 +748,201 @@ def _motion_event(event_type: str, payload: dict, timestamp: int | None = None) 
     return event(event_type, clean_payload, timestamp=emitted_at)
 
 
+def _track_ring_audio_task(task: asyncio.Task) -> None:
+    ring_audio_tasks.add(task)
+    task.add_done_callback(ring_audio_tasks.discard)
+
+
+def _accept_ring_session(event_type: str, payload: dict) -> None:
+    global active_ring_session_id
+    incoming = payload.get("sessionId")
+    if not incoming:
+        return
+    if active_ring_session_id is None or incoming == active_ring_session_id:
+        active_ring_session_id = incoming
+        return
+
+    phase = str(payload.get("phase", "")).lower()
+    begins_new_session = event_type == "audio_ready" or (
+        event_type == "status" and phase in {"connected", "ready", "recording"}
+    )
+    if not begins_new_session:
+        raise RingProtocolError("ring event belongs to a different active session")
+
+    active_ring_session_id = incoming
+    ring_event_guard.reset()
+    session.motion = {"ringSessionId": incoming}
+    _touch_session()
+
+
+async def _run_ring_audio_pipeline(expected_audio_id: str) -> None:
+    class InternalRequest:
+        headers = {"x-soundclay-audio-id": expected_audio_id}
+
+    try:
+        await transcribe_original_audio(InternalRequest(), auto_confirm=False)  # type: ignore[arg-type]
+    except HTTPException:
+        # The transcription route already publishes a readable error and restores
+        # the recoverable audio_ready phase.
+        return
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        session.last_error = str(exc)
+        _touch_session()
+        await publish(
+            "error",
+            {
+                "code": "RING_AUDIO_PIPELINE_FAILED",
+                "message": str(exc),
+                "recoverable": True,
+            },
+        )
+
+
+async def _ingest_ring_event(raw: dict, *, source: str) -> dict:
+    normalized = normalize_ring_event(raw)
+    event_type = normalized["type"]
+    timestamp = normalized["timestamp"]
+    payload = normalized["payload"]
+    _accept_ring_session(event_type, payload)
+
+    if not ring_event_guard.accept(normalized):
+        return {"accepted": False, "reason": "duplicate_or_out_of_order", "event": normalized}
+
+    if event_type == "status":
+        ring_status.update(payload)
+        ring_status["enabled"] = bool(ring_manager and ring_manager.enabled)
+        if "connected" not in payload and payload.get("phase") == "connected":
+            ring_status["connected"] = True
+        message = event("status", {**payload, "source": source}, timestamp=timestamp)
+        await bus.broadcast(message)
+        return {"accepted": True, "event": message}
+
+    if event_type == "error":
+        ring_status["lastError"] = payload["message"]
+        session.last_error = payload["message"]
+        _touch_session()
+        message = event("error", {**payload, "source": source}, timestamp=timestamp)
+        await bus.broadcast(message)
+        return {"accepted": True, "event": message}
+
+    if event_type == "audio_ready":
+        audio_path = Path(payload["wavPath"]).expanduser()
+        if not audio_path.is_absolute():
+            raise RingProtocolError("audio_ready.wavPath must be an absolute local path")
+        try:
+            audio_path = audio_path.resolve(strict=True)
+        except OSError as exc:
+            raise RingProtocolError(f"audio_ready.wavPath is unavailable: {exc}") from exc
+        if not audio_path.is_file() or audio_path.suffix.lower() != ".wav":
+            raise RingProtocolError("audio_ready.wavPath must point to a WAV file")
+        if audio_path.stat().st_size > MAX_UPLOAD_BYTES:
+            raise RingProtocolError("ring WAV exceeds the upload size limit")
+
+        async with audio_lock:
+            try:
+                wav_bytes = await asyncio.to_thread(audio_path.read_bytes)
+                metadata = await asyncio.to_thread(_store_wav, wav_bytes, audio_path.name)
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise RingProtocolError(f"ring WAV validation failed: {exc}") from exc
+            _reset_session_for_audio(metadata)
+            session.motion["ringSessionId"] = payload.get("sessionId")
+            _touch_session()
+            await publish(
+                "status",
+                {
+                    "phase": session.phase,
+                    "message": "Ring audio is ready",
+                    "ringSessionId": payload.get("sessionId"),
+                },
+            )
+            message = event(
+                "audio_ready",
+                {
+                    "sessionId": payload.get("sessionId"),
+                    "filename": metadata["filename"],
+                    "bytes": metadata["bytes"],
+                    "sampleRate": metadata["sampleRate"],
+                    "channels": metadata["channels"],
+                    "subtype": metadata["subtype"],
+                    "audioUrl": "/audio/original.wav",
+                    "phase": session.phase,
+                    "source": source,
+                },
+                timestamp=timestamp,
+            )
+            await bus.broadcast(message)
+            try:
+                await _analyze_current_audio()
+            except HTTPException as exc:
+                await publish(
+                    "error",
+                    {
+                        "code": "AUDIO_FEATURES_FAILED",
+                        "message": str(exc.detail),
+                        "recoverable": True,
+                    },
+                )
+
+        task = asyncio.create_task(
+            _run_ring_audio_pipeline(metadata["audio_id"]),
+            name=f"ring-stt-{metadata['audio_id'][:12]}",
+        )
+        _track_ring_audio_task(task)
+        return {"accepted": True, "event": message}
+
+    ring_session_id = payload["sessionId"]
+    if active_ring_session_id and ring_session_id != active_ring_session_id:
+        raise RingProtocolError("motion event belongs to a different active session")
+
+    if event_type == "imu":
+        twist = payload["twist"]
+        session.motion["ringSessionId"] = ring_session_id
+        session.motion["twist"] = twist
+        session.motion["accelMag"] = payload["accelMag"]
+        session.motion["gyroZ"] = payload["gyroZ"]
+        trace = session.motion.setdefault("trace", [])
+        trace.append({"type": "imu", "timestamp": timestamp, **payload})
+        if len(trace) > 500:
+            del trace[:-500]
+        _touch_session()
+        # Ableton's established route remains 0..1; only this adapter converts.
+        send_ableton_motion("twist", {"value": (twist + 1.0) / 2.0})
+        message = event("imu", {**payload, "source": source}, timestamp=timestamp)
+    else:
+        message = _motion_event(event_type, payload, timestamp)
+        message["payload"].update(
+            {
+                "sessionId": ring_session_id,
+                "source": payload.get("source", source),
+            }
+        )
+        if "sequence" in payload:
+            message["payload"]["sequence"] = payload["sequence"]
+        session.motion["ringSessionId"] = ring_session_id
+
+    await bus.broadcast(message)
+    return {"accepted": True, "event": message}
+
+
+async def _handle_ring_runtime_event(raw: dict) -> None:
+    try:
+        await _ingest_ring_event(raw, source="ring_runtime")
+    except (RingProtocolError, HTTPException, OSError, TypeError, ValueError) as exc:
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        ring_status["lastError"] = detail
+        await publish(
+            "error",
+            {
+                "code": "INVALID_RING_RUNTIME_EVENT",
+                "message": detail,
+                "recoverable": True,
+                "recommendedAction": "Check the RingRuntime event contract and retry.",
+            },
+        )
+
+
 @app.post("/api/mock/twist")
 async def mock_twist(value: float = Query(default=0.65)) -> dict:
     message = _motion_event("twist", {"value": value})
@@ -730,6 +969,50 @@ async def mock_color(hue: float = Query(default=205.0)) -> dict:
     message = _motion_event("color", {"hue": hue})
     await bus.broadcast(message)
     return message
+
+
+@app.get("/api/ring/status")
+async def get_ring_status() -> dict:
+    manager_status = ring_manager.status() if ring_manager else {
+        "enabled": False,
+        "connected": False,
+        "sessionRunning": False,
+        "lastError": None,
+        "runtimePath": None,
+    }
+    return {**ring_status, **manager_status, "activeSessionId": active_ring_session_id}
+
+
+@app.post("/api/ring/session/start")
+async def start_ring_session() -> dict:
+    if ring_manager is None:
+        raise HTTPException(status_code=503, detail="RingRuntime manager is not available")
+    try:
+        await ring_manager.begin_session(session.session_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await publish(
+        "status",
+        {
+            "phase": "recording",
+            "message": "Ring recording is armed; long-press the ring and speak",
+            "sessionId": session.session_id,
+        },
+    )
+    return {"started": True, "sessionId": session.session_id, **ring_manager.status()}
+
+
+@app.post("/api/mock/ring-event")
+async def mock_ring_event(body: EventMessage) -> dict:
+    if ring_manager and ring_manager.enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="mock ring ingestion is disabled while real RingRuntime is enabled",
+        )
+    try:
+        return await _ingest_ring_event(body.model_dump(), source="mock_replay")
+    except RingProtocolError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/save")
@@ -790,11 +1073,13 @@ async def save_current_work(body: SaveRequest) -> dict:
 
 @app.post("/api/reset")
 async def reset_session() -> SessionState:
-    global session
+    global session, active_ring_session_id
     async with audio_lock:
         await asyncio.to_thread(ORIGINAL_AUDIO.unlink, missing_ok=True)
         await asyncio.to_thread(OUTPUT_AUDIO.unlink, missing_ok=True)
         session = SessionState(session_id=str(uuid.uuid4()))
+        active_ring_session_id = None
+        ring_event_guard.reset()
     await publish("status", {"phase": session.phase, "message": "Ready"})
     return session
 
@@ -810,6 +1095,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "phase": session.phase,
                     "message": "Connected",
                     "audio_id": session.audio_id,
+                    "ringConnected": bool(ring_manager and ring_manager.connected),
+                    "ringEnabled": bool(ring_manager and ring_manager.enabled),
                 },
             )
         )
@@ -822,6 +1109,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 payload = incoming.get("payload", {})
                 if not isinstance(event_type, str) or not isinstance(payload, dict):
                     raise ValueError("ring event requires string type and object payload")
+
+                has_ring_session = bool(payload.get("sessionId") or payload.get("session_id"))
+                if event_type in {"status", "imu", "error"} or (
+                    event_type in {"burst", "freeze"} and has_ring_session
+                ):
+                    await _ingest_ring_event(incoming, source="websocket")
+                    continue
 
                 aliases = {
                     "imu/twist": "twist",

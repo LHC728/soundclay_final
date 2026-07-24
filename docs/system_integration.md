@@ -7,11 +7,11 @@ SoundClay P0 is a local-first FastAPI and Vite system. The current default page 
 Backend, from the repository root in Windows PowerShell:
 
 ```powershell
-cd backend
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+py -3.11 -m venv .venv311
+.venv311\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-Copy-Item .env.example .env
+Copy-Item backend\.env.example backend\.env
+cd backend
 python -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
@@ -25,7 +25,7 @@ npm run dev -- --host 127.0.0.1
 
 Open `http://127.0.0.1:5173`. Swagger is at `http://127.0.0.1:8000/docs`.
 
-The repository-local virtual environment must point to an installed Python. If it was moved or its base interpreter was removed, delete and recreate only `backend/.venv`; do not reuse a broken launcher.
+The supported integration environment uses Python 3.11 and a root-level `.venv311`. Do not copy or reuse a virtual environment from another checkout. FFmpeg must be available on `PATH` before real ring audio/STT acceptance.
 
 ## Environment
 
@@ -53,6 +53,8 @@ Backend variables:
 | `ABLETON_OSC_ENABLED` | `false` | Enables the optional local OSC/UDP bridge |
 | `ABLETON_OSC_HOST` | `127.0.0.1` | Ableton/Max for Live OSC receiver host |
 | `ABLETON_OSC_PORT` | `11000` | Ableton/Max for Live UDP receive port |
+| `SOUNDCLAY_RING_ENABLED` | `false` | Enables the single hardware `RingRuntime`; keep false for offline/mock testing |
+| `SOUNDCLAY_RING_PATH` | blank | Absolute local checkout containing AB's `ring_runtime.py` |
 
 The faster-whisper model must already be cached or supplied as a local path for offline use. Model instances are cached in memory by model/device/compute configuration. Tests replace provider/model calls and never download a model.
 
@@ -94,6 +96,9 @@ The eight taskbook phases remain available to legacy clients: `ready`, `recordin
 | `POST` | `/api/mock/burst?strength=0.9` | Clamps, traces, broadcasts, and returns burst |
 | `POST` | `/api/mock/freeze?active=true` | Freezes or releases, traces, broadcasts, and returns freeze; omitting `active` preserves the original freeze behavior |
 | `POST` | `/api/mock/color?hue=210` | Normalizes hue, traces/broadcasts the random color change, and forwards it to OSC |
+| `GET` | `/api/ring/status` | RingRuntime enablement, connection, current AB session, and recoverable error state |
+| `POST` | `/api/ring/session/start` | Arms audio capture and starts the single RingRuntime session when hardware mode is enabled |
+| `POST` | `/api/mock/ring-event` | Accepts one AB-contract event while hardware mode is disabled |
 | `POST` | `/api/save` | Backward-compatible local bundle save |
 | `POST` | `/api/reset` | Clears temporary audio/session data without deleting saved works |
 | `GET` | `/audio/original.wav` | Current temporary input when present |
@@ -126,6 +131,31 @@ All WebSocket events use this additive, backward-compatible envelope:
 ```
 
 Supported event types are `status`, `recording`, `audio_ready`, `transcript_ready`, `audio_features_ready`, `emotion_ready`, `material_ready`, `twist`, `burst`, `freeze`, `color`, `saved`, and `error`. Inbound `imu/twist`, `imu/burst`, and `imu/freeze` are accepted as Member B aliases; `ui/color` is accepted for color clients. Inbound JSON, identifiers, timestamps, and numbers are validated; normalized events are stored in a bounded 500-item trace and rebroadcast. No decoding or model inference occurs in the motion loop.
+
+## AB RingRuntime integration
+
+FastAPI owns exactly one optional `RingRuntime` for the process lifetime. Startup calls `connect()` and `get_status()`. A ring session calls `arm_recording(session_id)`, `enter_motion_mode(session_id)`, then `sculpt_until_freeze(session_id)` in sequence. Shutdown cancels an unfinished session before calling `runtime.close()`.
+
+The adapter accepts AB's `status`, `audio_ready`, `imu`, `burst`, `freeze`, and `error` events. Both `sessionId` and legacy `session_id` are accepted at ingress, then normalized to `sessionId`. Motion is isolated to the active AB session. `imu.twist` remains signed in `[-1, 1]`; only the optional Ableton adapter maps it to `[0, 1]`. Repeated or out-of-order IMU sequences, repeated bursts, and repeated freezes are idempotently ignored.
+
+`audio_ready.wavPath` must be an absolute existing local WAV path below the 50 MiB limit. The backend reads and validates it without moving or deleting AB's source file, atomically stores its own current WAV, computes real features, and launches local STT/emotion work outside the live motion loop.
+
+Hardware mode is deliberately disabled by default. To run the no-ring acceptance test, start FastAPI and replay the checked-in AB-shaped sample:
+
+```powershell
+.venv311\Scripts\python backend\replay_ring_events.py backend\samples\mock_motion.ndjson --speed 10
+```
+
+The sample contains signed IMU input plus duplicate `burst` and `freeze` records. The first discrete event is accepted and its duplicate returns `duplicate_or_out_of_order`. The frontend connects to `ws://127.0.0.1:8000/ws/ring`, shows connection/phase status, maps signed twist to particle/audio sculpting, triggers burst once, and makes freeze stop further editing.
+
+Only after mock acceptance should hardware mode be enabled in `backend/.env`:
+
+```dotenv
+SOUNDCLAY_RING_ENABLED=true
+SOUNDCLAY_RING_PATH=C:\absolute\path\to\soundclay-ring
+```
+
+Before real-ring acceptance, close the phone Zilo APK and any other BLE program, then start exactly one FastAPI/Python process. The local AB checkout and its hardware dependencies remain external to this repository.
 
 ## Audio analysis and recipe contracts
 

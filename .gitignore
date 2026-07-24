@@ -3,9 +3,11 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .pytest-tmp/
+.pytest-ring-*/
 
 # Python virtual environment
 .venv/
+.venv311/
 venv/
 
 # Secrets
@@ -24,6 +26,7 @@ works/
 
 # Logs and system files
 *.log
+dist/
 .vscode/
 .DS_Store
 Thumbs.db

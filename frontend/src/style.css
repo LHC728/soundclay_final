@@ -71,6 +71,46 @@ input:focus-visible {
   pointer-events: none;
 }
 
+.connection-status {
+  position: fixed;
+  z-index: 40;
+  top: calc(var(--safe-top) + 23px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding-left: 12px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.42);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.connection-status::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: #777;
+}
+
+.connection-status[data-connection="online"]::before {
+  background: #8fc9d8;
+}
+
+.connection-status[data-connection="ring"]::before {
+  background: #9ee6b4;
+  box-shadow: 0 0 8px rgba(158, 230, 180, 0.5);
+}
+
+.connection-status[data-connection="error"]::before,
+.connection-status[data-connection="offline"]::before {
+  background: #dc746d;
+}
+
 .stage {
   position: absolute;
   inset: 0;
@@ -203,6 +243,31 @@ input:focus-visible {
 .record-button[data-recording="true"] .record-dot {
   border-radius: 5px;
   transform: scale(0.82);
+}
+
+.ring-listening {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.ring-pulse {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #fff;
+  animation: ring-pulse 1.25s ease-in-out infinite;
+}
+
+@keyframes ring-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.72);
+  }
 }
 
 .tiny-label {
