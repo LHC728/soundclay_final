@@ -250,6 +250,8 @@ The checked Ableton Set contains these mappings; the backend reuses them exactly
 
 `freeze` and `color` have no saved MIDI assignment in this Set, so they continue through OSC only. This avoids silently inventing a second mapping.
 
+`POST /api/ableton/stop` sends a MIDI Clock Stop message (and the existing OSC freeze signal). The frontend calls it when **凝固作品** is selected. In Live's Link, Tempo & MIDI settings, enable **Sync** for the `SoundClay MIDI` input so Live accepts the incoming transport stop; keep Sync disabled on the matching output to avoid a feedback loop.
+
 To enable the optional OSC path as well, use:
 
 ```dotenv

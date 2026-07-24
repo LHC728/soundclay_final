@@ -21,6 +21,7 @@ from ableton_adapter import close_midi_output as close_ableton_midi
 from ableton_adapter import send_control as send_ableton_control
 from ableton_adapter import send_motion as send_ableton_motion
 from ableton_adapter import send_scene as send_ableton_scene
+from ableton_adapter import send_stop as stop_ableton_playback
 from ableton_adapter import status as ableton_status
 from emotion_adapter import analyze_emotion
 from event_bus import EventBus
@@ -274,6 +275,12 @@ async def get_status() -> dict:
 @app.get("/api/ableton/status")
 async def get_ableton_status() -> dict:
     return ableton_status()
+
+
+@app.post("/api/ableton/stop")
+async def stop_ableton() -> dict:
+    sent = stop_ableton_playback()
+    return {"ok": sent, "midiPort": ableton_status()["midi"]["resolvedPort"]}
 
 
 @app.get("/api/session/current")

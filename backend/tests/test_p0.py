@@ -702,6 +702,39 @@ def test_ableton_midi_reuses_saved_live_set_mapping(monkeypatch) -> None:
     ableton_adapter.close_midi_output()
 
 
+def test_ableton_stop_sends_midi_clock_stop(monkeypatch) -> None:
+    messages = []
+
+    class FakePort:
+        closed = False
+
+        def send(self, message):
+            messages.append(message)
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setenv("ABLETON_OSC_ENABLED", "false")
+    monkeypatch.setenv("ABLETON_MIDI_ENABLED", "true")
+    monkeypatch.setattr(ableton_adapter.mido, "get_output_names", lambda: ["SoundClay MIDI 2"])
+    monkeypatch.setattr(ableton_adapter.mido, "open_output", lambda _name: FakePort())
+    ableton_adapter.close_midi_output()
+
+    assert ableton_adapter.send_stop() is True
+    assert [message.type for message in messages] == ["stop"]
+    ableton_adapter.close_midi_output()
+
+
+def test_ableton_stop_route(client, monkeypatch) -> None:
+    test_client, _, _ = client
+    monkeypatch.setattr(server, "stop_ableton_playback", lambda: True)
+
+    response = test_client.post("/api/ableton/stop")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+
+
 def test_mode_selection_sends_existing_emotion_scene_note(client, monkeypatch) -> None:
     test_client, _, _ = client
     sent = []

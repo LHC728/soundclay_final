@@ -470,6 +470,9 @@ function completeCreation({ message = '作品已凝固', burst = false } = {}) {
     sculpture.setTwist(0)
     sculpture.freeze(true)
     audio.stopPlayback()
+    void stopAbletonPlayback().catch((error) => {
+      showError(error instanceof Error ? error.message : '无法停止 Ableton Live。')
+    })
     setState('result')
     showToast(message)
     isCompleting = false
@@ -477,6 +480,16 @@ function completeCreation({ message = '作品已凝固', burst = false } = {}) {
 
   if (burst) completionTimer = window.setTimeout(finalize, 260)
   else finalize()
+}
+
+async function stopAbletonPlayback() {
+  const response = await fetch(`${API_BASE}/api/ableton/stop`, { method: 'POST' })
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}))
+    throw new Error(detail.detail || `无法停止 Ableton Live（HTTP ${response.status}）。`)
+  }
+  const result = await response.json()
+  if (!result.ok) throw new Error('Ableton Live 停止指令未发送。')
 }
 
 function finishCreation() {

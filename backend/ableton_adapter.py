@@ -237,6 +237,13 @@ def send_scene(emotion: str, mode: str) -> bool:
     return send_midi_note(note)
 
 
+def send_stop() -> bool:
+    """Stop Live through MIDI Clock and preserve the existing OSC freeze signal."""
+    midi_sent = _send_midi(mido.Message("stop"))
+    osc_sent = send_control("freeze", 1)
+    return midi_sent or osc_sent
+
+
 def _osc_string(value: str) -> bytes:
     raw = value.encode("utf-8") + b"\0"
     return raw + b"\0" * ((4 - len(raw) % 4) % 4)
