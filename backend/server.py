@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
 import os
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote
 
 import soundfile as sf
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -13,12 +16,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from audio_pipeline import analyze_audio
-from emotion_analyzer import analyze_emotion_local
+from ableton_adapter import send_control as send_ableton_control
+from ableton_adapter import send_motion as send_ableton_motion
+from ableton_adapter import status as ableton_status
+from emotion_adapter import analyze_emotion
 from event_bus import EventBus
 from recipe_engine import build_recipe
 from save_service import save_work
 from schemas import (
     AudioFeatures,
+    Emotion,
     EmotionConfirmRequest,
     ModeSelectRequest,
     Phase,
@@ -26,7 +33,8 @@ from schemas import (
     SessionState,
     TranscriptRequest,
 )
-from stt_adapter import STTError, transcribe_audio
+from stt_adapter import STTError, get_stt_provider, transcribe_audio
+from chinese_text import normalize_transcript
 
 BASE_DIR = Path(__file__).resolve().parent
 AUDIO_DIR = BASE_DIR / "audio"
@@ -38,7 +46,7 @@ ORIGINAL_AUDIO = AUDIO_DIR / "original.wav"
 OUTPUT_AUDIO = AUDIO_DIR / "output.wav"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
-app = FastAPI(title="SoundClay Emotion Backend", version="0.2.0")
+app = FastAPI(title="SoundClay Emotion Backend", version="0.3.0")
 configured_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 app.add_middleware(
     CORSMiddleware,
@@ -57,18 +65,30 @@ app.mount("/works", StaticFiles(directory=WORKS_DIR), name="works")
 
 bus = EventBus()
 session = SessionState(session_id=str(uuid.uuid4()))
+audio_lock = asyncio.Lock()
 
 
-def event(event_type: str, payload: dict) -> dict:
+def event(event_type: str, payload: dict, *, timestamp: int | None = None) -> dict:
+    owned_payload = {
+        "session_id": session.session_id,
+        "audio_id": session.audio_id,
+        "revision": session.revision,
+        **payload,
+    }
     return {
         "type": event_type,
-        "timestamp": int(time.time() * 1000),
-        "payload": payload,
+        "timestamp": timestamp if timestamp is not None else int(time.time() * 1000),
+        "payload": owned_payload,
     }
 
 
 async def publish(event_type: str, payload: dict) -> None:
     await bus.broadcast(event(event_type, payload))
+
+
+def _touch_session() -> None:
+    session.revision += 1
+    session.updated_at = datetime.now(timezone.utc).isoformat()
 
 
 def _clamped_number(value: float, name: str) -> float:
@@ -77,7 +97,17 @@ def _clamped_number(value: float, name: str) -> float:
     return float(max(0.0, min(1.0, value)))
 
 
-def _store_wav(payload: bytes) -> dict:
+def _safe_upload_filename(value: str | None) -> str:
+    if not value:
+        return "original.wav"
+    decoded = unquote(value).replace("\\", "/")
+    filename = Path(decoded).name.strip()
+    if not filename or len(filename) > 255:
+        return "original.wav"
+    return filename
+
+
+def _store_wav(payload: bytes, filename: str) -> dict:
     if not payload:
         raise ValueError("WAV upload is empty")
     if len(payload) > MAX_UPLOAD_BYTES:
@@ -87,21 +117,68 @@ def _store_wav(payload: bytes) -> dict:
 
     temporary = AUDIO_DIR / f"upload-{uuid.uuid4().hex}.wav"
     try:
-        temporary.write_bytes(payload)
+        with temporary.open("xb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
         info = sf.info(str(temporary))
         if info.frames <= 0 or info.samplerate <= 0:
             raise ValueError("WAV upload has no audio frames")
-        temporary.replace(ORIGINAL_AUDIO)
+        os.replace(temporary, ORIGINAL_AUDIO)
     finally:
         temporary.unlink(missing_ok=True)
 
     return {
+        "audio_id": hashlib.sha256(payload).hexdigest(),
+        "filename": filename,
         "audioUrl": "/audio/original.wav",
         "bytes": len(payload),
         "sampleRate": info.samplerate,
         "channels": info.channels,
         "frames": info.frames,
+        "format": info.format,
+        "subtype": info.subtype,
+        "expectedFormat": (
+            info.samplerate == 16_000
+            and info.channels == 1
+            and info.subtype == "PCM_16"
+        ),
     }
+
+
+def _describe_existing_audio(path: Path) -> dict:
+    payload = path.read_bytes()
+    return {
+        "audio_id": hashlib.sha256(payload).hexdigest(),
+        "filename": path.name,
+        "bytes": len(payload),
+    }
+
+
+def _reset_session_for_audio(metadata: dict) -> None:
+    session.phase = Phase.AUDIO_READY
+    session.audio_id = metadata["audio_id"]
+    session.audio_filename = metadata["filename"]
+    session.audio_bytes = metadata["bytes"]
+    session.transcript = None
+    session.emotion = None
+    session.confidence = None
+    session.reason = None
+    session.emotion_provider = None
+    session.emotion_warning = None
+    session.emotion_scores = None
+    session.emotion_weights = None
+    session.emotion_cache_hit = False
+    session.mode = None
+    session.recipe = None
+    session.features = AudioFeatures()
+    session.features_audio_id = None
+    session.original_audio_url = metadata["audioUrl"]
+    session.output_audio_url = None
+    session.motion = {}
+    session.saved_id = None
+    session.last_error = None
+    _touch_session()
 
 
 async def _analyze_current_audio(*, emit: bool = True) -> AudioFeatures:
@@ -112,9 +189,18 @@ async def _analyze_current_audio(*, emit: bool = True) -> AudioFeatures:
     except (OSError, RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"audio analysis failed: {exc}") from exc
     session.features = features
+    session.features_audio_id = session.audio_id
     session.original_audio_url = "/audio/original.wav"
+    _touch_session()
     if emit:
-        await publish("audio_features_ready", features.model_dump())
+        await publish(
+            "audio_features_ready",
+            {
+                **features.model_dump(),
+                "audio_id": session.audio_id,
+                "phase": session.phase,
+            },
+        )
     return features
 
 
@@ -130,7 +216,16 @@ async def get_status() -> dict:
         "phase": session.phase,
         "modeHint": "mock-controls-available",
         "lastError": session.last_error,
+        "audioId": session.audio_id,
+        "sessionId": session.session_id,
+        "revision": session.revision,
+        "ableton": ableton_status(),
     }
+
+
+@app.get("/api/ableton/status")
+async def get_ableton_status() -> dict:
+    return ableton_status()
 
 
 @app.get("/api/session/current")
@@ -163,83 +258,315 @@ async def upload_audio(request: Request) -> dict:
             raise HTTPException(status_code=413, detail="WAV upload is too large")
         chunks.append(chunk)
     payload = b"".join(chunks)
-    try:
-        result = await asyncio.to_thread(_store_wav, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    session.original_audio_url = result["audioUrl"]
-    session.last_error = None
-    features = await _analyze_current_audio()
-    return {**result, "features": features.model_dump()}
+    filename = _safe_upload_filename(request.headers.get("x-soundclay-filename"))
+
+    async with audio_lock:
+        try:
+            result = await asyncio.to_thread(_store_wav, payload, filename)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        _reset_session_for_audio(result)
+        await publish(
+            "status",
+            {
+                "phase": session.phase,
+                "message": "New audio is ready",
+                "audio_id": session.audio_id,
+            },
+        )
+        await publish(
+            "audio_ready",
+            {
+                "phase": session.phase,
+                "filename": session.audio_filename,
+                "bytes": session.audio_bytes,
+                "sampleRate": result["sampleRate"],
+                "channels": result["channels"],
+                "subtype": result["subtype"],
+            },
+        )
+
+        feature_error: str | None = None
+        try:
+            features = await _analyze_current_audio()
+        except HTTPException as exc:
+            features = session.features
+            feature_error = str(exc.detail)
+            session.last_error = feature_error
+            _touch_session()
+            await publish(
+                "error",
+                {
+                    "code": "AUDIO_FEATURES_FAILED",
+                    "message": feature_error,
+                    "audio_id": session.audio_id,
+                },
+            )
+
+        return {
+            **result,
+            "phase": session.phase,
+            "session_id": session.session_id,
+            "revision": session.revision,
+            "features": features.model_dump(),
+            "featureError": feature_error,
+        }
 
 
 @app.post("/api/audio/analyze")
 async def analyze_current_audio() -> dict:
-    features = await _analyze_current_audio()
-    return features.model_dump()
+    async with audio_lock:
+        features = await _analyze_current_audio()
+        return {
+            **features.model_dump(),
+            "audio_id": session.audio_id,
+            "session_id": session.session_id,
+            "revision": session.revision,
+        }
 
 
 @app.post("/api/stt/transcribe")
-async def transcribe_original_audio() -> dict:
-    if not ORIGINAL_AUDIO.exists():
-        raise HTTPException(status_code=404, detail="backend/audio/original.wav not found")
+async def transcribe_original_audio(
+    request: Request,
+    auto_confirm: bool = Query(default=False),
+) -> dict:
+    async with audio_lock:
+        if not ORIGINAL_AUDIO.exists():
+            raise HTTPException(status_code=404, detail="backend/audio/original.wav not found")
+        if session.audio_id is None:
+            metadata = await asyncio.to_thread(_describe_existing_audio, ORIGINAL_AUDIO)
+            session.audio_id = metadata["audio_id"]
+            session.audio_filename = metadata["filename"]
+            session.audio_bytes = metadata["bytes"]
+            session.original_audio_url = "/audio/original.wav"
+            _touch_session()
 
-    session.phase = Phase.UNDERSTANDING
-    session.last_error = None
-    await publish(
-        "status", {"phase": session.phase, "message": "Understanding your voice"}
-    )
+        expected_audio_id = request.headers.get("x-soundclay-audio-id")
+        if expected_audio_id and expected_audio_id != session.audio_id:
+            raise HTTPException(
+                status_code=409,
+                detail="The selected audio is no longer current. Refresh the session and retry.",
+            )
 
-    try:
-        transcript = await transcribe_audio(ORIGINAL_AUDIO)
-    except STTError as exc:
-        session.last_error = str(exc)
-        await publish("error", {"code": "STT_FAILED", "message": str(exc)})
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    session.transcript = transcript
-    await publish("transcript_ready", {"transcript": transcript})
-
-    feature_error: str | None = None
-    try:
-        await _analyze_current_audio()
-    except HTTPException as exc:
-        feature_error = str(exc.detail)
-        session.last_error = feature_error
+        audio_id = session.audio_id
+        provider = get_stt_provider()
+        started = time.perf_counter()
+        session.phase = Phase.UNDERSTANDING
+        session.last_error = None
+        _touch_session()
         await publish(
-            "error", {"code": "AUDIO_FEATURES_FAILED", "message": feature_error}
+            "status",
+            {
+                "phase": session.phase,
+                "message": "Understanding your voice",
+                "audio_id": audio_id,
+            },
         )
 
-    result = analyze_emotion_local(transcript)
+        transcription_started = time.perf_counter()
+        try:
+            transcript = normalize_transcript(await transcribe_audio(ORIGINAL_AUDIO))
+        except STTError as exc:
+            session.phase = Phase.AUDIO_READY
+            session.last_error = str(exc)
+            _touch_session()
+            await publish(
+                "error",
+                {"code": "STT_FAILED", "message": str(exc), "audio_id": audio_id},
+            )
+            await publish(
+                "status",
+                {
+                    "phase": session.phase,
+                    "message": "Transcription failed; audio remains ready",
+                    "audio_id": audio_id,
+                },
+            )
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        transcription_ms = round((time.perf_counter() - transcription_started) * 1000, 2)
+
+        session.transcript = transcript
+        await publish(
+            "transcript_ready", {"transcript": transcript, "audio_id": audio_id}
+        )
+
+        feature_error: str | None = None
+        if session.features_audio_id != audio_id:
+            try:
+                await _analyze_current_audio()
+            except HTTPException as exc:
+                feature_error = str(exc.detail)
+                session.last_error = feature_error
+                await publish(
+                    "error",
+                    {
+                        "code": "AUDIO_FEATURES_FAILED",
+                        "message": feature_error,
+                        "audio_id": audio_id,
+                    },
+                )
+
+        emotion_started = time.perf_counter()
+        decision = await analyze_emotion(transcript, session.features)
+        result = decision.result
+        session.emotion = result.emotion
+        session.confidence = result.confidence
+        session.reason = result.reason
+        session.emotion_provider = decision.provider
+        session.emotion_warning = decision.warning
+        session.emotion_scores = decision.scores
+        session.emotion_weights = decision.weights
+        session.emotion_cache_hit = decision.cache_hit
+        session.phase = Phase.MODE_CHOICE if auto_confirm else Phase.EMOTION_REVIEW
+        _touch_session()
+        response = {
+            "transcript": transcript,
+            **result.model_dump(mode="json"),
+            "features": session.features.model_dump(),
+            "emotionProvider": decision.provider,
+            "emotionWarning": decision.warning,
+            "emotionScores": decision.scores,
+            "emotionWeights": decision.weights,
+            "emotionCacheHit": decision.cache_hit,
+            "featureError": feature_error,
+            "phase": session.phase,
+            "audio_id": audio_id,
+            "session_id": session.session_id,
+            "revision": session.revision,
+            "filename": session.audio_filename,
+            "bytes": session.audio_bytes,
+            "provider": provider,
+            "timing": {
+                "transcription_ms": transcription_ms,
+                "emotion_ms": round((time.perf_counter() - emotion_started) * 1000, 2),
+                "total_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
+        }
+        await publish("emotion_ready", response)
+        await publish(
+            "status",
+            {
+                "phase": session.phase,
+                "message": "Choose Express or Soothe" if auto_confirm else "Emotion ready for review",
+                "audio_id": audio_id,
+            },
+        )
+        return response
+
+
+async def _mock_recording_impl() -> dict:
+    await asyncio.to_thread(ORIGINAL_AUDIO.unlink, missing_ok=True)
+    await asyncio.to_thread(OUTPUT_AUDIO.unlink, missing_ok=True)
+    session.phase = Phase.RECORDING
+    session.audio_id = None
+    session.audio_filename = None
+    session.audio_bytes = None
+    session.transcript = None
+    session.emotion = None
+    session.confidence = None
+    session.reason = None
+    session.emotion_provider = None
+    session.emotion_warning = None
+    session.emotion_scores = None
+    session.emotion_weights = None
+    session.emotion_cache_hit = False
+    session.mode = None
+    session.recipe = None
+    session.features = AudioFeatures()
+    session.features_audio_id = None
+    session.original_audio_url = None
+    session.output_audio_url = None
+    session.motion = {}
+    session.saved_id = None
+    session.last_error = None
+    _touch_session()
+    message = event("recording", {"phase": session.phase, "mock": True})
+    await bus.broadcast(message)
+    await publish("status", {"phase": session.phase, "message": "Mock recording"})
+    return message
+
+
+@app.post("/api/mock/recording")
+async def mock_recording() -> dict:
+    async with audio_lock:
+        return await _mock_recording_impl()
+
+
+async def _mock_transcript_impl(body: TranscriptRequest, *, auto_confirm: bool = False) -> dict:
+    transcript = normalize_transcript(body.transcript)
+    session.phase = Phase.UNDERSTANDING
+    session.last_error = None
+    session.transcript = transcript
+    session.emotion = None
+    session.confidence = None
+    session.reason = None
+    session.emotion_provider = None
+    session.emotion_warning = None
+    session.emotion_scores = None
+    session.emotion_weights = None
+    session.emotion_cache_hit = False
+    session.mode = None
+    session.recipe = None
+    session.output_audio_url = None
+    session.motion = {}
+    session.saved_id = None
+    _touch_session()
+    await publish(
+        "transcript_ready",
+        {"transcript": transcript, "audio_id": session.audio_id},
+    )
+
+    decision = await analyze_emotion(transcript, session.features)
+    result = decision.result
     session.emotion = result.emotion
     session.confidence = result.confidence
     session.reason = result.reason
-    session.phase = Phase.EMOTION_REVIEW
-    response = {
+    session.emotion_provider = decision.provider
+    session.emotion_warning = decision.warning
+    session.emotion_scores = decision.scores
+    session.emotion_weights = decision.weights
+    session.emotion_cache_hit = decision.cache_hit
+    session.phase = Phase.MODE_CHOICE if auto_confirm else Phase.EMOTION_REVIEW
+    _touch_session()
+    payload = result.model_dump(mode="json")
+    await publish(
+        "emotion_ready",
+        {
+            "transcript": transcript,
+            **payload,
+            "phase": session.phase,
+            "audio_id": session.audio_id,
+            "emotionProvider": decision.provider,
+            "emotionWarning": decision.warning,
+            "emotionScores": decision.scores,
+            "emotionWeights": decision.weights,
+            "emotionCacheHit": decision.cache_hit,
+        },
+    )
+    return {
         "transcript": transcript,
-        **result.model_dump(mode="json"),
+        **payload,
         "features": session.features.model_dump(),
-        "featureError": feature_error,
+        "emotionProvider": decision.provider,
+        "emotionWarning": decision.warning,
+        "emotionScores": decision.scores,
+        "emotionWeights": decision.weights,
+        "emotionCacheHit": decision.cache_hit,
+        "phase": session.phase,
+        "audio_id": session.audio_id,
+        "session_id": session.session_id,
+        "revision": session.revision,
     }
-    await publish("emotion_ready", response)
-    return response
 
 
 @app.post("/api/mock/transcript")
-async def mock_transcript(body: TranscriptRequest) -> dict:
-    session.phase = Phase.UNDERSTANDING
-    session.last_error = None
-    session.transcript = body.transcript
-    await publish("transcript_ready", {"transcript": body.transcript})
-
-    result = analyze_emotion_local(body.transcript)
-    session.emotion = result.emotion
-    session.confidence = result.confidence
-    session.reason = result.reason
-    session.phase = Phase.EMOTION_REVIEW
-    payload = result.model_dump(mode="json")
-    await publish("emotion_ready", {"transcript": body.transcript, **payload})
-    return {"transcript": body.transcript, **payload, "features": session.features.model_dump()}
+async def mock_transcript(
+    body: TranscriptRequest,
+    auto_confirm: bool = Query(default=False),
+) -> dict:
+    async with audio_lock:
+        return await _mock_transcript_impl(body, auto_confirm=auto_confirm)
 
 
 @app.post("/api/emotion/confirm")
@@ -249,60 +576,158 @@ async def confirm_emotion(body: EmotionConfirmRequest) -> SessionState:
     session.emotion = body.emotion
     session.confidence = 1.0
     session.reason = "Confirmed or corrected by the user."
+    session.emotion_provider = "user"
+    session.emotion_warning = None
+    session.emotion_scores = {
+        emotion.value: 1.0 if emotion == body.emotion else 0.0
+        for emotion in Emotion
+    }
+    session.emotion_weights = {"text": 0.0, "acoustic": 0.0, "glm": 0.0, "user": 1.0}
+    session.emotion_cache_hit = False
     session.phase = Phase.MODE_CHOICE
+    session.mode = None
+    session.recipe = None
+    session.saved_id = None
+    _touch_session()
     await publish(
-        "status", {"phase": session.phase, "message": "Choose Express or Soothe"}
+        "status",
+        {
+            "phase": session.phase,
+            "message": "Choose Express or Soothe",
+            "audio_id": session.audio_id,
+        },
     )
     return session
 
 
 @app.post("/api/mode/select")
 async def select_mode(body: ModeSelectRequest) -> dict:
+    # The default Member D experience now starts with direction selection and
+    # deliberately performs no emotion inference.  Keep a neutral material
+    # base internally so the existing recipe/save contracts remain compatible.
     if session.emotion is None:
-        raise HTTPException(status_code=409, detail="confirm an emotion first")
+        session.emotion = Emotion.NEUTRAL_MIXED
+        session.confidence = None
+        session.reason = "Direct mode selection; no emotion classification was performed."
+        session.emotion_provider = "direct_mode"
+        session.emotion_warning = None
+        session.emotion_scores = None
+        session.emotion_weights = None
+        session.emotion_cache_hit = False
     session.mode = body.mode
     session.phase = Phase.MATERIALIZING
+    session.saved_id = None
+    session.last_error = None
+    _touch_session()
+    await publish(
+        "status",
+        {"phase": session.phase, "message": "Generating local material recipe"},
+    )
     session.recipe = build_recipe(session.emotion, body.mode)
+    send_ableton_control("mode", body.mode.value)
     if ORIGINAL_AUDIO.exists():
         session.original_audio_url = "/audio/original.wav"
         session.output_audio_url = "/audio/original.wav"
 
+    session.phase = Phase.SCULPTING
+    _touch_session()
     payload = {
         "mode": body.mode,
+        "audio_id": session.audio_id,
         "audioUrl": session.output_audio_url,
         "recipe": session.recipe,
         "features": session.features.model_dump(),
         "seed": abs(hash(session.session_id)) % 10000,
+        "phase": session.phase,
+        "session_id": session.session_id,
+        "revision": session.revision,
     }
     await publish("material_ready", payload)
-    session.phase = Phase.SCULPTING
+    await publish("status", {"phase": session.phase, "message": "Sculpting"})
     return payload
+
+
+@app.post("/api/recipe/preview")
+async def preview_recipe(body: ModeSelectRequest) -> dict:
+    """Build a direction preview without advancing or mutating the session."""
+    material_base = session.emotion or Emotion.NEUTRAL_MIXED
+    return {
+        "mode": body.mode,
+        "audio_id": session.audio_id,
+        "recipe": build_recipe(material_base, body.mode),
+        "features": session.features.model_dump(),
+        "phase": session.phase,
+        "session_id": session.session_id,
+        "revision": session.revision,
+    }
+
+
+def _motion_event(event_type: str, payload: dict, timestamp: int | None = None) -> dict:
+    emitted_at = timestamp if timestamp is not None else int(time.time() * 1000)
+    clean_payload: dict = {}
+    if event_type == "twist":
+        value = _clamped_number(float(payload.get("value", 0.0)), "value")
+        session.motion["twist"] = value
+        clean_payload["value"] = value
+    elif event_type == "burst":
+        strength = _clamped_number(
+            float(payload.get("strength", 0.0)), "strength"
+        )
+        session.motion["burstStrength"] = strength
+        session.motion["burstCount"] = int(session.motion.get("burstCount", 0)) + 1
+        clean_payload["strength"] = strength
+    elif event_type == "freeze":
+        active = bool(payload.get("active", True))
+        session.motion["frozen"] = active
+        clean_payload["active"] = active
+        if active:
+            session.motion["frozenAt"] = emitted_at
+        else:
+            session.motion["unfrozenAt"] = emitted_at
+    elif event_type == "color":
+        hue = float(payload.get("hue", 0.0))
+        if not math.isfinite(hue):
+            raise HTTPException(status_code=422, detail="hue must be finite")
+        hue = hue % 360.0
+        session.motion["colorHue"] = hue
+        session.motion["colorChanges"] = int(session.motion.get("colorChanges", 0)) + 1
+        clean_payload["hue"] = hue
+    else:
+        raise HTTPException(status_code=422, detail=f"unsupported motion event: {event_type}")
+
+    trace = session.motion.setdefault("trace", [])
+    trace.append({"type": event_type, "timestamp": emitted_at, **clean_payload})
+    if len(trace) > 500:
+        del trace[:-500]
+    _touch_session()
+    send_ableton_motion(event_type, clean_payload)
+    return event(event_type, clean_payload, timestamp=emitted_at)
 
 
 @app.post("/api/mock/twist")
 async def mock_twist(value: float = Query(default=0.65)) -> dict:
-    clamped = _clamped_number(value, "value")
-    session.motion["twist"] = clamped
-    message = event("twist", {"value": clamped})
+    message = _motion_event("twist", {"value": value})
     await bus.broadcast(message)
     return message
 
 
 @app.post("/api/mock/burst")
 async def mock_burst(strength: float = Query(default=0.9)) -> dict:
-    clamped = _clamped_number(strength, "strength")
-    session.motion["burstStrength"] = clamped
-    session.motion["burstCount"] = int(session.motion.get("burstCount", 0)) + 1
-    message = event("burst", {"strength": clamped})
+    message = _motion_event("burst", {"strength": strength})
     await bus.broadcast(message)
     return message
 
 
 @app.post("/api/mock/freeze")
-async def mock_freeze() -> dict:
-    message = event("freeze", {})
-    session.motion["frozen"] = True
-    session.motion["frozenAt"] = message["timestamp"]
+async def mock_freeze(active: bool = Query(default=True)) -> dict:
+    message = _motion_event("freeze", {"active": active})
+    await bus.broadcast(message)
+    return message
+
+
+@app.post("/api/mock/color")
+async def mock_color(hue: float = Query(default=205.0)) -> dict:
+    message = _motion_event("color", {"hue": hue})
     await bus.broadcast(message)
     return message
 
@@ -314,6 +739,10 @@ async def save_current_work(body: SaveRequest) -> dict:
 
     final_motion = {**session.motion, **body.final_motion}
     session.motion = final_motion
+    previous_phase = session.phase
+    session.phase = Phase.SAVED
+    session.last_error = None
+    _touch_session()
     session_data = session.model_dump(mode="json")
     session_data["finalMotion"] = final_motion
     try:
@@ -322,25 +751,50 @@ async def save_current_work(body: SaveRequest) -> dict:
             works_dir=WORKS_DIR,
             session_data=session_data,
             original_audio=ORIGINAL_AUDIO if ORIGINAL_AUDIO.exists() else None,
-            output_audio=OUTPUT_AUDIO if OUTPUT_AUDIO.exists() else None,
+            output_audio=(
+                OUTPUT_AUDIO
+                if session.output_audio_url == "/audio/output.wav"
+                and OUTPUT_AUDIO.exists()
+                else None
+            ),
             screenshot_data_url=body.screenshot_data_url,
             processed_audio_data_url=body.processed_audio_data_url,
         )
     except ValueError as exc:
+        session.phase = previous_phase
+        session.last_error = str(exc)
+        _touch_session()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except OSError as exc:
+        session.phase = previous_phase
+        session.last_error = str(exc)
+        _touch_session()
         raise HTTPException(status_code=500, detail=f"save failed: {exc}") from exc
 
     session.saved_id = result["id"]
-    session.phase = Phase.SAVED
-    await publish("saved", result)
-    return result
+    _touch_session()
+    response = {
+        **result,
+        "session_id": session.session_id,
+        "audio_id": session.audio_id,
+        "phase": session.phase,
+        "emotion": session.emotion,
+        "mode": session.mode,
+        "features": session.features.model_dump(),
+        "motion": session.motion,
+        "revision": session.revision,
+    }
+    await publish("saved", response)
+    return response
 
 
 @app.post("/api/reset")
 async def reset_session() -> SessionState:
     global session
-    session = SessionState(session_id=str(uuid.uuid4()))
+    async with audio_lock:
+        await asyncio.to_thread(ORIGINAL_AUDIO.unlink, missing_ok=True)
+        await asyncio.to_thread(OUTPUT_AUDIO.unlink, missing_ok=True)
+        session = SessionState(session_id=str(uuid.uuid4()))
     await publish("status", {"phase": session.phase, "message": "Ready"})
     return session
 
@@ -350,10 +804,55 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await bus.connect(websocket)
     try:
         await websocket.send_json(
-            event("status", {"phase": session.phase, "message": "Connected"})
+            event(
+                "status",
+                {
+                    "phase": session.phase,
+                    "message": "Connected",
+                    "audio_id": session.audio_id,
+                },
+            )
         )
         while True:
-            await websocket.receive_text()
+            incoming = await websocket.receive_json()
+            try:
+                if not isinstance(incoming, dict):
+                    raise ValueError("ring event must be a JSON object")
+                event_type = incoming.get("type")
+                payload = incoming.get("payload", {})
+                if not isinstance(event_type, str) or not isinstance(payload, dict):
+                    raise ValueError("ring event requires string type and object payload")
+
+                aliases = {
+                    "imu/twist": "twist",
+                    "imu/burst": "burst",
+                    "imu/freeze": "freeze",
+                    "ui/color": "color",
+                }
+                event_type = aliases.get(event_type, event_type)
+                if event_type not in {"twist", "burst", "freeze", "color"}:
+                    raise ValueError(f"unsupported inbound ring event: {event_type}")
+                incoming_session = payload.get("session_id")
+                incoming_audio = payload.get("audio_id")
+                if incoming_session and incoming_session != session.session_id:
+                    raise ValueError("ring event belongs to an older session")
+                if incoming_audio and incoming_audio != session.audio_id:
+                    raise ValueError("ring event belongs to older audio")
+
+                raw_timestamp = incoming.get("timestamp")
+                timestamp = None
+                if raw_timestamp is not None:
+                    timestamp_number = float(raw_timestamp)
+                    if not math.isfinite(timestamp_number) or timestamp_number < 0:
+                        raise ValueError("ring event timestamp must be finite and positive")
+                    timestamp = int(timestamp_number)
+                message = _motion_event(event_type, payload, timestamp)
+                await bus.broadcast(message)
+            except (HTTPException, TypeError, ValueError) as exc:
+                detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+                await websocket.send_json(
+                    event("error", {"code": "INVALID_RING_EVENT", "message": detail})
+                )
     except WebSocketDisconnect:
         await bus.disconnect(websocket)
     except Exception:

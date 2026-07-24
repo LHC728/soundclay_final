@@ -1,43 +1,21 @@
 # SoundClay P0 system integration
 
-SoundClay P0 is a local-first FastAPI and Vite system. The default page is a lightweight integration console and does not import or initialize Three.js. A real ring is not required: a mock transcript and HTTP motion controls exercise the complete workflow.
+SoundClay P0 is a local-first FastAPI and Vite system. The current default page deliberately bypasses recording, transcription, and emotion classification: it opens directly on a horizontal direction choice. Left enters Rhythm and right enters Soothe. Both modes use the shared Three.js particle instrument, local Web Audio loop, mock/ring motion interface, and optional Ableton OSC bridge. Legacy audio/STT/emotion routes remain available for backward-compatible clients but are not called by the default page.
 
-## Backend startup
+## Startup
 
-From the repository root on Windows PowerShell:
+Backend, from the repository root in Windows PowerShell:
 
 ```powershell
 cd backend
 python -m venv .venv
-Set-ExecutionPolicy -Scope Process Bypass
 .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 python -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-The API is available at `http://127.0.0.1:8000`; Swagger is at `http://127.0.0.1:8000/docs`.
-
-The default `.env.example` uses `STT_PROVIDER=mock`, so the no-hardware demo does not load or download a model. For real local transcription, set `STT_PROVIDER=faster_whisper`. The configured `WHISPER_MODEL` must already be present in the local faster-whisper cache when the machine has no internet access.
-
-Backend environment variables:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `STT_PROVIDER` | `mock` | `mock`, `faster_whisper`, or `local_whisper` |
-| `MOCK_TRANSCRIPT` | example Chinese sentence | Transcript returned by the mock STT adapter |
-| `WHISPER_MODEL` | `base` | Local faster-whisper model name or path |
-| `WHISPER_DEVICE` | `cpu` | faster-whisper device |
-| `WHISPER_COMPUTE_TYPE` | `int8` | faster-whisper compute type |
-| `WHISPER_LANGUAGE` | `zh` | Transcription language hint |
-| `EMOTION_PROVIDER` | `local` | Reserved provider selector; the working path remains local |
-| `FRONTEND_ORIGIN` | `http://localhost:5173` | Additional allowed frontend origin |
-
-No API key, authentication service, database, cloud API, or ring driver is needed for P0.
-
-## Frontend startup
-
-In a second terminal:
+Frontend, in a second terminal:
 
 ```powershell
 cd frontend
@@ -45,105 +23,222 @@ npm ci
 npm run dev -- --host 127.0.0.1
 ```
 
-Open `http://127.0.0.1:5173`.
+Open `http://127.0.0.1:5173`. Swagger is at `http://127.0.0.1:8000/docs`.
 
-Optional `frontend/.env` values:
+The repository-local virtual environment must point to an installed Python. If it was moved or its base interpreter was removed, delete and recreate only `backend/.venv`; do not reuse a broken launcher.
+
+## Environment
+
+Backend variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `STT_PROVIDER` | `mock` | `mock`, `faster_whisper`, or legacy alias `local_whisper` |
+| `MOCK_TRANSCRIPT` | local example | Offline transcript fallback |
+| `WHISPER_MODEL` | `base` | Local faster-whisper model name or path |
+| `WHISPER_DEVICE` | `cpu` | faster-whisper device |
+| `WHISPER_COMPUTE_TYPE` | `int8` | faster-whisper compute type |
+| `WHISPER_LANGUAGE` | `zh` | Language hint; blank allows auto-detection |
+| `WHISPER_BEAM_SIZE` | `1` | Beam size from 1 through 20; `1` is the fast interactive default |
+| `STT_TIMEOUT_SECONDS` | `120` | Local STT timeout from 1 through 3600 seconds |
+| `EMOTION_PROVIDER` | `hybrid` | `hybrid`/`glm` uses GLM when a key exists; `local` forces offline fusion |
+| `EMOTION_BASE_URL` | `https://aiping.cn/api/v1` | User-selected OpenAI-compatible base URL |
+| `EMOTION_MODEL` | `GLM-5.2` | Emotion reasoning model ID sent to the compatible API |
+| `EMOTION_SOFT_TIMEOUT_SECONDS` | `1.5` | Maximum time the interactive flow waits for GLM before freezing the local result |
+| `EMOTION_TIMEOUT_SECONDS` | `3` | Hard HTTP timeout for the background GLM request, 1 through 30 seconds |
+| `EMOTION_CIRCUIT_FAILURES` | `3` | Consecutive GLM failures before temporarily bypassing the remote provider |
+| `EMOTION_CIRCUIT_SECONDS` | `30` | Circuit-breaker cooldown in seconds |
+| `EMOTION_API_KEY` | blank | Bearer token read only from `backend/.env`; blank uses local fusion immediately |
+| `FRONTEND_ORIGIN` | `http://localhost:5173` | Additional CORS origin |
+| `ABLETON_OSC_ENABLED` | `false` | Enables the optional local OSC/UDP bridge |
+| `ABLETON_OSC_HOST` | `127.0.0.1` | Ableton/Max for Live OSC receiver host |
+| `ABLETON_OSC_PORT` | `11000` | Ableton/Max for Live UDP receive port |
+
+The faster-whisper model must already be cached or supplied as a local path for offline use. Model instances are cached in memory by model/device/compute configuration. Tests replace provider/model calls and never download a model.
+
+Frontend variables:
 
 ```dotenv
 VITE_API_BASE=http://127.0.0.1:8000
 VITE_WS_URL=ws://127.0.0.1:8000/ws/ring
+VITE_EMOTION_AUDIO_BASE=/audio/emotions
+VITE_RHYTHM_AUDIO_URL=/audio/modes/rhythm.wav
+VITE_SOOTHE_AUDIO_URL=/audio/modes/soothe.wav
 ```
 
-The checked-in `frontend/.env.example` contains the defaults. Do not commit a real `.env`.
+## Public values and phases
 
-## HTTP API
+Canonical emotion values are `joy`, `anger`, `sadness`, `anxiety`, and `neutral_mixed`. The legacy request spelling `neutral-mixed` remains accepted and is serialized as `neutral_mixed`. This is an expressed-emotion classification of the user's words, not a diagnosis or claim about a hidden internal state.
+
+Modes are `express` and `soothe`. Stable ring motion types remain `twist`, `burst`, and `freeze`; the new default UI adds the backward-compatible `color` interaction.
+
+The eight taskbook phases remain available to legacy clients: `ready`, `recording`, `understanding`, `emotion_review`, `mode_choice`, `materializing`, `sculpting`, and `saved`. `audio_ready` is an explicit recoverable handoff between Recording and Understanding. The current product page skips this chain and starts with direct direction selection; `emotion_review` remains only for backward compatibility.
+
+## HTTP and WebSocket API
 
 | Method | Route | Behavior |
 | --- | --- | --- |
-| `GET` | `/health` | Process health, returns `{"ok":true}` |
-| `GET` | `/api/status` | Ring availability, phase, mock hint, and last feature/STT error |
-| `GET` | `/api/session/current` | Complete in-memory session including transcript, emotion, features, recipe, and motion |
-| `POST` | `/api/audio/upload` | Stores a raw RIFF/WAVE request body as `backend/audio/original.wav`, validates it, analyzes it, and emits `audio_features_ready` |
-| `POST` | `/api/audio/analyze` | Analyzes the current `original.wav` with work dispatched through `asyncio.to_thread` |
-| `POST` | `/api/stt/transcribe` | Transcribes the current WAV, analyzes real features, classifies expressed emotion, and emits progress/results |
-| `POST` | `/api/mock/transcript` | Accepts `{"transcript":"..."}` for an offline/no-ring flow |
-| `POST` | `/api/emotion/confirm` | Accepts one stable emotion value and advances the session |
-| `POST` | `/api/mode/select` | Accepts `express` or `soothe`; returns features and the material recipe |
-| `POST` | `/api/mock/twist?value=0.65` | Clamps to `[0,1]`, updates session motion, broadcasts and returns the event |
-| `POST` | `/api/mock/burst?strength=0.9` | Clamps to `[0,1]`, increments burst count, broadcasts and returns the event |
-| `POST` | `/api/mock/freeze` | Marks the session frozen, broadcasts and returns the event |
-| `POST` | `/api/save` | Backward-compatible metadata save with optional screenshot, processed WAV, and final motion |
-| `POST` | `/api/reset` | Creates a fresh in-memory session |
-| `WS` | `/ws/ring` | Sends status on connection and broadcasts all P0 events |
+| `GET` | `/health` | Process health |
+| `GET` | `/api/status` | Phase, session/audio ownership, revision, ring/mock hint, and last error |
+| `GET` | `/api/ableton/status` | Optional OSC transport configuration and address map |
+| `GET` | `/api/session/current` | Authoritative complete in-memory session |
+| `POST` | `/api/audio/upload` | Atomically stores and analyzes a raw RIFF/WAVE body |
+| `POST` | `/api/audio/analyze` | Re-analyzes the current WAV outside the event loop |
+| `POST` | `/api/stt/transcribe` | Transcribes the current owned WAV and classifies expressed emotion; `?auto_confirm=true` proceeds directly to Mode Choice |
+| `POST` | `/api/mock/recording` | Enters Recording and clears temporary input/derived state |
+| `POST` | `/api/mock/transcript` | Offline/manual transcript and local emotion fallback; supports `?auto_confirm=true` |
+| `POST` | `/api/emotion/confirm` | Confirms or corrects an emotion |
+| `POST` | `/api/recipe/preview` | Builds an Express/Soothe preview without advancing or mutating the session |
+| `POST` | `/api/mode/select` | Selects Express/Soothe and generates a validated recipe |
+| `POST` | `/api/mock/twist?value=0.65` | Clamps, traces, broadcasts, and returns twist |
+| `POST` | `/api/mock/burst?strength=0.9` | Clamps, traces, broadcasts, and returns burst |
+| `POST` | `/api/mock/freeze?active=true` | Freezes or releases, traces, broadcasts, and returns freeze; omitting `active` preserves the original freeze behavior |
+| `POST` | `/api/mock/color?hue=210` | Normalizes hue, traces/broadcasts the random color change, and forwards it to OSC |
+| `POST` | `/api/save` | Backward-compatible local bundle save |
+| `POST` | `/api/reset` | Clears temporary audio/session data without deleting saved works |
+| `GET` | `/audio/original.wav` | Current temporary input when present |
+| `GET` | `/audio/output.wav` | Optional backend-produced temporary output when present |
+| `WS` | `/ws/ring` | Status plus P0 event broadcast and validated inbound motion adapter |
 
-The audio upload uses the raw request body rather than multipart form data, keeping the backend free of an additional multipart dependency. Accepted content types are `audio/wav`, `audio/x-wav`, and `application/octet-stream`; the maximum upload is 50 MiB.
+The upload body content type may be `audio/wav`, `audio/x-wav`, or `application/octet-stream`; maximum size is 50 MiB. The backend writes a same-directory temporary file, validates it through libsndfile, flushes it, and uses `os.replace`. A successful response includes `session_id`, filename, byte size, SHA-256 `audio_id`, sample rate, channels, subtype, and `expectedFormat`. The ring target is 16 kHz, mono, PCM-16; valid alternatives remain accepted so stereo-to-mono and decoded ring compatibility work.
 
-## Audio features
+Every successful new upload clears transcript, emotion, confidence, reason, mode, recipe, motion, saved ID, output URL, and old error before feature analysis. The resulting features are tagged with their SHA-256 audio owner and reused during transcription instead of running the same analysis twice. `POST /api/stt/transcribe` accepts an optional `X-SoundClay-Audio-Id` header; a mismatch returns `409` before provider invocation. Its response includes transcript, emotion, confidence, reason, features, phase, provider, timing, and ownership metadata.
 
-`volume`, `pitch`, and `brightness` are finite normalized floats in `[0,1]`:
+The local fusion classifier uses weighted Mandarin/English phrases, phrase specificity, negation, intensifiers/diminishers, contrast-clause emphasis, recency, mixed-evidence detection, and the current normalized `volume`, `pitch`, and `brightness`. Text remains the stronger signal; acoustic evidence helps when words are short or ambiguous. Silence does not create an acoustic label. It classifies only the emotion expressed by speech and is not a diagnosis.
 
-- volume is normalized RMS across the complete mono signal;
-- pitch uses a bounded center window and FFT autocorrelation, avoiding quadratic work on long files;
-- brightness uses the spectral centroid of the bounded window;
-- stereo is averaged to mono;
-- empty, silent, non-finite, and very short signals return safe values instead of NaN or infinity.
+With `EMOTION_PROVIDER=hybrid` and a non-empty `EMOTION_API_KEY`, the adapter sends the transcript, all three normalized features, and local evidence to `GLM-5.2` through `${EMOTION_BASE_URL}/chat/completions`. GLM must return probabilities for all five public emotions rather than only a winning label. The server validates and normalizes those probabilities, then deterministically fuses text, acoustic, and GLM evidence. The base weighting is 45% text, 20% acoustics, and 35% GLM; weak or silent acoustic evidence automatically receives less weight, and weak text gives GLM slightly more weight. Close scores or unresolved local/GLM disagreement resolve to `neutral_mixed` instead of an unstable forced label.
 
-If feature extraction fails after a successful transcription, the transcript remains stored and is still classified. An `error` event with code `AUDIO_FEATURES_FAILED` reports the degraded feature step.
+The interactive decision deadline defaults to 1.5 seconds. If GLM is not ready by then, the already-computed local result is returned and cannot later overwrite the session. Successful remote decisions are cached in memory by transcript, features, endpoint, model, and fusion version. Three consecutive remote failures open a 30-second circuit breaker, keeping subsequent requests fast while the provider is unavailable. Malformed JSON, missing scores, invalid numbers, HTTP errors, and timeouts all fall back locally without breaking the flow. `emotion_provider`, `emotion_warning`, `emotion_scores`, `emotion_weights`, and `emotion_cache_hit` are additive session diagnostics. No key is logged or returned. Enabling GLM transmits the transcript and three feature numbers to the configured provider; use `EMOTION_PROVIDER=local` when fully offline/private operation is required.
 
-## WebSocket schema
-
-Every event uses the same envelope:
+All WebSocket events use this additive, backward-compatible envelope:
 
 ```json
 {
   "type": "twist",
   "timestamp": 1720000000000,
-  "payload": { "value": 0.65 }
+  "payload": {
+    "session_id": "session-uuid",
+    "audio_id": "sha256-or-null",
+    "revision": 12,
+    "value": 0.65
+  }
 }
 ```
 
-Stable event types are `status`, `transcript_ready`, `audio_features_ready`, `emotion_ready`, `material_ready`, `twist`, `burst`, `freeze`, `saved`, and `error`.
+Supported event types are `status`, `recording`, `audio_ready`, `transcript_ready`, `audio_features_ready`, `emotion_ready`, `material_ready`, `twist`, `burst`, `freeze`, `color`, `saved`, and `error`. Inbound `imu/twist`, `imu/burst`, and `imu/freeze` are accepted as Member B aliases; `ui/color` is accepted for color clients. Inbound JSON, identifiers, timestamps, and numbers are validated; normalized events are stored in a bounded 500-item trace and rebroadcast. No decoding or model inference occurs in the motion loop.
 
-Motion payloads are:
+## Audio analysis and recipe contracts
+
+`volume`, `pitch`, and `brightness` are finite floats in `[0,1]`. Volume is normalized RMS across the mono signal. Pitch uses a bounded center window and FFT autocorrelation, avoiding quadratic work on long files. Brightness uses spectral centroid on the bounded window. Stereo channels are averaged; empty, silent, non-finite, and very short audio has safe zero fallbacks. Blocking soundfile/NumPy work and the optional GLM HTTP request run outside the async event loop.
+
+Recipes contain:
 
 ```json
-{"type":"twist","timestamp":1720000000000,"payload":{"value":0.65}}
-{"type":"burst","timestamp":1720000000000,"payload":{"strength":0.9}}
-{"type":"freeze","timestamp":1720000000000,"payload":{}}
+{
+  "voiceFx": {
+    "playbackRate": 1.0,
+    "lowpassHz": 4200,
+    "distortion": 0.1,
+    "reverb": 0.4,
+    "gain": 1.0
+  },
+  "soundscape": {
+    "stemId": "neutral_air_01",
+    "emotionStemId": "emotion_neutral_mixed",
+    "pulseRate": 0.45,
+    "stemGain": 0.26
+  },
+  "audioBed": {
+    "stemId": "neutral_air_01",
+    "emotionStemId": "emotion_neutral_mixed",
+    "pulseRate": 0.45,
+    "stemGain": 0.26
+  },
+  "visual": {
+    "sharpness": 0.35,
+    "density": 0.5,
+    "breathing": 0.48,
+    "motion": "floating"
+  }
+}
 ```
 
-The frontend reconnects with bounded exponential delay and offers a manual reconnect button. HTTP mock routes remain usable when the socket or real ring is unavailable.
+`soundscape` is preserved; `audioBed` is the taskbook-compatible additive alias. Pydantic validates finite bounded values. Express and Soothe use the same deterministic emotion matrix but produce different audio and visual parameters.
 
-## Lightweight UI flow
+## Direct-mode frontend workflow
 
-1. Confirm the backend and WebSocket indicators are online.
-2. Choose a WAV and click **Upload WAV**, or skip audio and use **Analyze mock transcript**.
-3. For a real/local STT run, click **Start transcription**.
-4. Review the transcript, initial expressed-emotion label, confidence, and reason.
-5. Select any of the five stable emotions and click **Confirm emotion**.
-6. Choose **Express** or **Soothe**, then generate the recipe.
-7. Inspect normalized features and the voice FX, audio-bed, and visual recipe cards.
-8. Adjust and emit twist/burst, then freeze. The mock HTTP response and WebSocket event appear in the log.
-9. Optionally include the generated placeholder PNG and click **Save locally**.
-10. Read the returned work ID and absolute work path in the save panel.
+1. The entry screen immediately accepts a left/right swipe, pointer drag, button click, or keyboard arrow. It performs no audio upload, STT, or emotion call.
+2. Left/Rhythm and Right/Soothe both call the backward-compatible `POST /api/mode/select`. Rhythm maps internally to the stable `express` value; Soothe uses `soothe`. They display the same particle instrument and try to loop `frontend/public/audio/modes/rhythm.wav` or `soothe.wav`. Browser audio unlock occurs inside the selection gesture. If a file is missing, visuals and Ableton controls remain usable and a non-blocking status explains where to add it.
+3. One click arms/disarms pointer-based wrist simulation in either mode. Horizontal rotation updates particle twist, Web Audio low-pass cutoff, distortion, and playback rate together. Real `twist` WebSocket events use the same adapter.
+4. A fast fling emits `burst`; particles expand and decay, audio receives a short gain/filter/distortion impulse, and both return to the current stable recipe after 620 ms.
+5. Returning to direction selection stops the current loop. Entering the other mode resets twist state, loads that mode's distinct recipe and loop, and ignores a late audio response from the previous selection.
 
-All request buttons show disabled/loading states. Section-specific errors remain visible, malformed responses are rejected, and the event log retains the latest 50 events.
+## Completion cover and sharing
 
-## Fast no-hardware demo
+The editing page exposes one primary `完成` action. It stores the current mode title, audio buffer reference, duration, direction rotation, twist, visual mode, space, and energy in the local `currentWork` object, then transitions `editing → finishing → completed`. The existing Three.js instance is retained throughout.
 
-With both servers running and the backend using `STT_PROVIDER=mock`:
+`setPresentationMode()` changes targets inside the existing particle render loop. Finishing/completed states interpolate motion to `0.08`, audio response to `0`, distortion to `0.12`, breathing to `0.08`, and swing to `0.03`; playback restores them to `1`. No particle geometry, render loop, or AudioContext is recreated.
 
-1. Click **Analyze mock transcript**.
-2. Confirm or correct the emotion.
-3. Select Express or Soothe and generate the recipe.
-4. Emit twist and burst; click freeze.
-5. Save without a screenshot for the minimal metadata-only path, or check the placeholder option to exercise image saving.
+After the cover settles, one 1.1-second timer attempts a single non-looping playback if the user has not selected an action. Browser autoplay rejection is silent. The playback button uses the same decoded buffer and audio graph, prevents parallel sources, starts manual playback from the beginning, and preserves position when paused. Natural completion returns to the quiet cover state.
 
-This path requires no Whisper model, internet access, microphone, ring, or IMU.
+The completed page displays only the work title and play/share/continue-editing icons. Share opens one bottom sheet containing Video, Audio, Share Link, and Cancel. Video export remains an explicit placeholder. Audio uses a real processed WAV with system file sharing when supported and a user-triggered download fallback otherwise. A link is shared only when a real `currentWork.shareUrl` exists; no localhost or fake link is generated. Continue Editing restores the saved particle parameters and loop without reloading the page or creating new renderer/audio instances.
 
-## Save request and output
+## Ableton Live bridge
 
-The request remains compatible with the earlier shape. Every field is optional at schema level, while the session must already have a confirmed emotion and selected mode:
+`backend/ableton_adapter.py` implements dependency-free OSC over UDP. It is disabled by default, so Ableton being closed can never break the browser flow. To enable it, put the following only in `backend/.env` and restart FastAPI:
+
+```dotenv
+ABLETON_OSC_ENABLED=true
+ABLETON_OSC_HOST=127.0.0.1
+ABLETON_OSC_PORT=11000
+```
+
+In Max for Live, use this receiving chain:
+
+```text
+[udpreceive 11000]
+        |
+    [oscparse]
+        |
+[route soundclay]
+        |
+[route twist filter burst freeze color mode]
+```
+
+The bridge sends:
+
+| OSC address | Value | Suggested Ableton mapping |
+| --- | --- | --- |
+| `/soundclay/mode` | `soothe` or `express` string (`express` = product-facing Rhythm) | Rack/scene selection |
+| `/soundclay/twist` | normalized float `0..1` | Macro control |
+| `/soundclay/filter` | cutoff in Hz `700..16000` | Auto Filter frequency |
+| `/soundclay/burst` | normalized float `0..1` | Envelope/transient trigger |
+| `/soundclay/freeze` | integer `0/1` | Freeze/hold device |
+| `/soundclay/color` | normalized hue `0..1` | Timbre, send, or spectral macro |
+
+`GET /api/ableton/status` exposes the active host, port, transport, and address map. `POST /api/mock/color?hue=210` and WebSocket `ui/color` are additive test controls. Existing twist/burst/freeze mock and ring events automatically forward to OSC when enabled.
+
+## Legacy single-screen workflow
+
+The previous product experience followed `网页产品设计.docx`: one full-screen particle stage, four continuous phases, no page navigation, and only the currently relevant control visible. It remains documented here only for backward-compatible testing.
+
+1. **声音** — tap the central microphone to record. `BrowserWavRecorder` captures mono samples, resamples to 16 kHz, encodes PCM-16 RIFF/WAVE, uploads, and starts local transcription automatically. WAV upload and a Chinese mock transcript remain available as quiet fallbacks.
+2. **理解** — Understanding always exits in `finally`. The transcript response is applied first and then completely replaced by `GET /api/session/current`. Local expressed-emotion classification is automatically accepted for this product flow, so no emotion-review page appears; the detected value and rationale remain visible in diagnostics.
+3. **方向** — the `律动 ↔ 舒缓` rail fetches two non-mutating preview recipes and continuously interpolates their numeric Web Audio and visual parameters. One second of rest or a tap on the clay confirms the nearest canonical backend mode.
+4. **塑形** — the voice loops automatically when audio exists. Canvas drag gives immediate local space/energy/twist feedback while sampled twist events are traced by the backend. A tap creates a burst/timeline marker; press-and-hold freezes audio and particles, and release resumes them. Visible fallback controls keep the flow usable without a ring.
+5. **完成** — Done captures the live canvas, tries an offline processed WAV export, and saves the local Voice Portrait bundle. The final cover exposes only play, share, and restart. The share icon opens local/native sharing choices rather than permanently showing download controls.
+
+Backend/WebSocket status, transcript, emotion rationale, normalized features, recipe, motion trace, save result, endpoints, recovery actions, and event log remain available in the top-right diagnostics drawer without competing with the default instrument interface.
+
+API and WebSocket URLs are centralized in `frontend/src/api.js`. Each input operation has a generation and current audio identifier. Late HTTP responses and WebSocket events with an older generation, session ID, audio ID, or revision are ignored. Duplicate transcription clicks are blocked. Successful health/upload/transcription clears stale errors. Request timeouts show executable retry guidance.
+
+`frontend/src/audio.js` supplies non-artistic Web Audio plumbing: user-interaction unlock, WAV decode, filter/distortion/reverb/gain recipe application, loop-safe one-source lifecycle, live recipe parameter updates, suspend/resume freeze, emotion-first stem lookup, and offline PCM-16 export. Put the five final loops in `frontend/public/audio/emotions/` as `joy.wav`, `anger.wav`, `sadness.wav`, `anxiety.wav`, and `neutral_mixed.wav`. `VITE_EMOTION_AUDIO_BASE` can relocate that directory. Missing artistic stems do not stop original-voice playback.
+
+`frontend/src/clay-visual.js` is the lightweight default renderer. It maps recipe sharpness/density/breathing, real volume/pitch/brightness, the continuous direction, twist, burst, freeze, pointer speed, and x/y movement to the central particle clay. `frontend/src/visual-adapter.js` still emits the stable material/motion events and legacy rotate/swipe/hold mappings, so the preserved Three.js/kaleidoscope renderer can be substituted later without changing the API flow.
+
+## Save and privacy
+
+The request remains backward compatible:
 
 ```json
 {
@@ -153,29 +248,40 @@ The request remains compatible with the earlier shape. Every field is optional a
 }
 ```
 
-PNG screenshots are limited to 5 MiB decoded. Processed RIFF/WAVE audio is limited to 25 MiB decoded. MIME prefixes, strict base64, file signatures, finite motion numbers, and upload sizes are validated before a work directory is allocated. Unique timestamp-plus-random IDs prevent an earlier work from being overwritten.
+PNG is limited to 5 MiB decoded; processed RIFF/WAVE is limited to 25 MiB. MIME prefixes, strict base64, signatures, finite motion numbers, and sizes are validated before allocating the final work directory. IDs combine UTC time and random data; directory creation is exclusive.
 
 ```text
-works/<work-id>/
-├── original.wav    # when an uploaded/current original exists
-├── output.wav      # when processed audio data or backend output exists
-├── sculpture.png   # when a screenshot is supplied
-└── portrait.json   # always
+works/<unique-work-id>/
+|-- original.wav     # when current input exists
+|-- output.wav       # when processed/backend output exists
+|-- sculpture.png    # when a screenshot exists
+|-- portrait.json    # private local backward-compatible full metadata
+`-- metadata.json    # public-card projection without transcript
 ```
 
-`portrait.json` contains session ID/phase, transcript, emotion, confidence, reason, mode, normalized features, recipe, audio URLs, and merged final motion.
+`portrait.json` stores the local transcript, session/audio IDs, timestamps, confirmed emotion, mode, features, recipe, and motion trace. `metadata.json` deliberately omits transcript and reason. There is no account, database, gallery, or community upload.
 
-## Advanced Three.js visual handoff
+## Mock smoke flow
 
-Member D's visual implementation remains in `frontend/src/main.js`, `frontend/src/style.css`, `frontend/src/sculpture.js`, and `frontend/src/kaleido-theme.js`. The default `index.html` now imports `integration-main.js`, whose dependency graph does not include Three.js and has no animation loop.
+With `STT_PROVIDER=mock`:
 
-For a temporary legacy visual run, change the `index.html` module source back to `/src/main.js`. For the final integration, keep the centralized endpoints from `api.js`, consume the same session and WebSocket event envelopes, and map `material_ready`, `twist`, `burst`, and `freeze` into Member D's renderer. The visual should export a PNG data URL only when saving; it should not run model inference or alter backend event types.
+1. Start both servers and verify `/health` plus WebSocket status.
+2. Upload any valid short WAV and transcribe, or submit a mock transcript.
+3. Confirm/correct the emotion.
+4. Generate Express, then Soothe, and verify the recipes differ.
+5. Emit twist, burst, and freeze.
+6. Save and verify a unique work directory.
+7. Reset and verify temporary audio/session fields clear while the work remains.
 
-## Remaining member dependencies
+Newest-audio regression: upload A, transcribe A, upload B, verify A's transcript/recipe/motion disappear, transcribe B, and verify the UI exits Understanding and `/api/session/current.audio_id` equals B's upload SHA-256.
 
-- **Member A:** provide the Zilo Whisper ring audio capture/transfer contract and decide whether the device posts raw WAV to `/api/audio/upload` or deposits a compatible local file. Confirm sample rate, channel count, session timing, and reconnect behavior.
-- **Member B:** provide the real IMU-to-event adapter and calibrated mapping for twist value, burst strength, and freeze detection. It must emit the stable event envelope without invoking model inference in the live loop.
-- **Member D:** connect the preserved Three.js/kaleidoscope renderer to the P0 session/event contract, apply the visual recipe and motion events, and provide the final screenshot plus any processed `output.wav` data at save time. Final performance and visual redesign remain outside P0 integration.
+## Preserved advanced renderer and remaining dependencies
+
+The approved Member D page structure, typography, interaction hierarchy, responsive layout, Canvas particle behavior, state transitions, screenshot composition, local audio loop, direction morphing, share menu, and recovery/diagnostics flow are implemented in the default `integration-main.js` experience. The prior experimental renderer remains preserved in `frontend/src/main.js`, `frontend/src/style.css`, `frontend/src/sculpture.js`, `frontend/src/kaleido-theme.js`, and visual assets; none is imported by the default lightweight page.
+
+- Member A: provide Zilo ring audio capture/transfer, exact decoded audio contract, sample/channel timing, and reconnect behavior.
+- Member B: provide real IMU calibration/gesture recognition and feed the validated twist/burst/freeze envelope. The adapter and mocks are ready; no gesture model is implemented here.
+- Member D: optional future artistic work is limited to supplying final stem assets/mixes or deliberately replacing the lightweight Canvas renderer with the preserved Three.js renderer. These assets are not required for the complete P0 mock/WAV flow.
 
 ## Validation
 
@@ -183,9 +289,11 @@ From the repository root:
 
 ```powershell
 python -m compileall backend
-python -m pytest -q
+python -m pytest -q -p no:cacheprovider --basetemp=.pytest-tmp
 cd frontend
-npm run build
+npm.cmd test
+npm.cmd run build
+node --check src/integration-main.js
 ```
 
-Tests generate temporary WAV/work data only, mock the transcription adapter, require no internet, and never load a Whisper model or real ring.
+Also run `node --check` for every changed frontend JavaScript file and `git diff --check`. Tests use a repository-local base temp, write no permanent work data, use no ring or internet, and mock all model calls.

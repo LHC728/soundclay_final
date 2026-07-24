@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from schemas import Emotion, Mode
+from schemas import Emotion, MaterialRecipe, Mode
 
 
 _BASE: dict[Emotion, dict] = {
@@ -38,6 +38,7 @@ def build_recipe(emotion: Emotion, mode: Mode) -> dict:
     recipe = deepcopy(_BASE[emotion])
     recipe["emotion"] = emotion.value
     recipe["mode"] = mode.value
+    recipe["soundscape"]["emotionStemId"] = f"emotion_{emotion.value}"
 
     if mode == Mode.EXPRESS:
         recipe["voiceFx"]["distortion"] = min(recipe["voiceFx"]["distortion"] + 0.08, 0.45)
@@ -61,4 +62,7 @@ def build_recipe(emotion: Emotion, mode: Mode) -> dict:
             "motion": "settling",
         })
 
-    return recipe
+    # Keep the original ``soundscape`` key and expose the taskbook's
+    # equivalent ``audioBed`` name additively for older and newer clients.
+    recipe["audioBed"] = deepcopy(recipe["soundscape"])
+    return MaterialRecipe.model_validate(recipe).model_dump(mode="json")

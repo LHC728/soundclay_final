@@ -5,6 +5,7 @@ import binascii
 import json
 import shutil
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -118,12 +119,41 @@ def save_work(
             destination.write_bytes(screenshot)
             files["image"] = str(destination)
 
+        saved_at = datetime.now(timezone.utc).isoformat()
+        private_metadata = deepcopy(session_data)
+        private_metadata["saved_id"] = work_id
+        private_metadata["saved_at"] = saved_at
+        private_metadata["phase"] = "saved"
+
         metadata_path = target / "portrait.json"
         metadata_path.write_text(
-            json.dumps(session_data, ensure_ascii=False, indent=2),
+            json.dumps(private_metadata, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         files["metadata"] = str(metadata_path)
+
+        # This projection is safe to bind to a public Voice Portrait card. The
+        # full transcript remains only in the local backward-compatible file.
+        public_metadata = {
+            "id": work_id,
+            "saved_at": saved_at,
+            "session_id": session_data.get("session_id"),
+            "audio_id": session_data.get("audio_id"),
+            "emotion": session_data.get("emotion"),
+            "emotion_provider": session_data.get("emotion_provider"),
+            "emotion_scores": session_data.get("emotion_scores"),
+            "mode": session_data.get("mode"),
+            "features": session_data.get("features", {}),
+            "recipe": session_data.get("recipe"),
+            "motion": session_data.get("finalMotion", session_data.get("motion", {})),
+            "privateTranscriptStoredLocally": bool(session_data.get("transcript")),
+        }
+        public_path = target / "metadata.json"
+        public_path.write_text(
+            json.dumps(public_metadata, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        files["publicMetadata"] = str(public_path)
     except Exception:
         shutil.rmtree(target, ignore_errors=True)
         raise
