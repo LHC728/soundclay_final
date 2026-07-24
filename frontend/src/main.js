@@ -127,19 +127,22 @@ function render() {
   if (state === 'mode') {
     copy.innerHTML = `
       <h1 class="title">选择声音的方向</h1>
-      <p class="subtitle">拖动粒子或滑轨，实时试听。</p>
+      <p class="subtitle">向左滑动进入舒缓模式，向右滑动进入释放模式。</p>
     `
     controls.innerHTML = `
       <div class="mode-control">
-        <div class="mode-labels"><span>释放</span><span>${modeName()}</span><span>舒缓</span></div>
-        <input class="mode-slider" id="mode-slider" type="range" min="0" max="100" value="${Math.round(mode * 100)}" aria-label="选择释放或舒缓程度" />
+        <div class="mode-labels"><span>舒缓</span><span>${modeName()}</span><span>释放</span></div>
+        <input class="mode-slider" id="mode-slider" type="range" min="0" max="100" value="${Math.round((1 - mode) * 100)}" aria-label="向左选择舒缓模式，向右选择释放模式" />
       </div>
-      <button class="primary-button" id="enter-sculpt">进入塑形</button>
     `
 
     const slider = document.querySelector('#mode-slider')
-    slider.addEventListener('input', () => setMode(Number(slider.value) / 100))
-    document.querySelector('#enter-sculpt').addEventListener('click', enterSculpt)
+    slider.addEventListener('input', () => {
+      const sliderPosition = Number(slider.value) / 100
+      setMode(1 - sliderPosition)
+
+      if (sliderPosition === 0 || sliderPosition === 1) enterSculpt()
+    })
     return
   }
 
@@ -226,7 +229,8 @@ function setMode(value) {
   const labels = document.querySelector('.mode-labels')
   if (labels) labels.children[1].textContent = modeName()
   const slider = document.querySelector('#mode-slider')
-  if (slider && Number(slider.value) !== Math.round(mode * 100)) slider.value = String(Math.round(mode * 100))
+  const sliderValue = Math.round((1 - mode) * 100)
+  if (slider && Number(slider.value) !== sliderValue) slider.value = String(sliderValue)
 }
 
 function enterSculpt() {
