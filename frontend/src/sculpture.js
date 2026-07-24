@@ -123,6 +123,10 @@ const vertexShader = /* glsl */ `
   uniform float uPointScale;
   uniform float uProgress;
   uniform float uState;
+  uniform float uScatter;
+  uniform float uAggregate;
+  uniform float uDent;
+  uniform float uPull;
 
   attribute float aRadius;
   attribute float aAngle;
@@ -201,6 +205,22 @@ const vertexShader = /* glsl */ `
     float morph = smoothstep(0.0, 1.0, uRibbonMorph);
     vec3 p = mix(kaleido, ribbon, morph);
 
+    // 爆散、聚合、压凹和拉起共享同一批粒子并平滑过渡。
+    float scatterScale = 1.0 + uScatter * (0.58 + aSeed * 0.72);
+    p.xy *= scatterScale;
+    p.z += uScatter * sin(aPhase * 2.0 + aSeed * 8.0) * 0.72;
+
+    p.x *= 1.0 - uAggregate * 0.30;
+    p.y *= 1.0 + uAggregate * 0.22;
+    p.z *= 1.0 - uAggregate * 0.34;
+
+    float dentProfile = pow(max(0.0, 1.0 - radiusRatio), 1.35);
+    p.y *= 1.0 - uDent * 0.30;
+    p.z -= uDent * dentProfile * 1.35;
+
+    p *= 1.0 + uPull * 0.36;
+    p.z += uPull * (0.18 + radiusRatio * 0.32);
+
     float stageScale = mix(0.96, 1.03, smoothstep(0.0, 3.0, uState));
     p *= stageScale;
 
@@ -276,6 +296,10 @@ export function createSculpture(container) {
     uPointScale: { value: 320 },
     uProgress: { value: 0 },
     uState: { value: 0 },
+    uScatter: { value: 0 },
+    uAggregate: { value: 0 },
+    uDent: { value: 0 },
+    uPull: { value: 0 },
   }
 
   const material = new THREE.ShaderMaterial({
@@ -315,6 +339,10 @@ export function createSculpture(container) {
   let twistSmoothed = 0
   let twistPersistent = false
   let lastTwistInputAt = 0
+  let scatterTarget = 0
+  let aggregateTarget = 0
+  let dentTarget = 0
+  let pullTarget = 0
 
   function resize() {
     const width = Math.max(1, container.clientWidth)
@@ -353,8 +381,8 @@ export function createSculpture(container) {
     twistPersistent = Boolean(persistent) && twistTarget !== 0
     lastTwistInputAt = performance.now()
 
-    // 只有雕刻页面第一次检测到明确转腕，才把万花筒变成横向条带。
-    if (Math.abs(twistTarget) > 0.01) ribbonTarget = 1
+    // 截图版交互保持球形，只用转腕改变整体旋转与扭曲。
+    if (Math.abs(twistTarget) > 0.01) ribbonTarget = 0
   }
 
   function setEnergy(value) {
@@ -412,6 +440,10 @@ export function createSculpture(container) {
       uniforms.uEnergy.value += (energyTarget - uniforms.uEnergy.value) * (1 - Math.exp(-6.5 * delta))
       uniforms.uState.value += (stateTarget - uniforms.uState.value) * (1 - Math.exp(-5.2 * delta))
       uniforms.uProgress.value += (progressTarget - uniforms.uProgress.value) * (1 - Math.exp(-9 * delta))
+      uniforms.uScatter.value += (scatterTarget - uniforms.uScatter.value) * (1 - Math.exp(-4.8 * delta))
+      uniforms.uAggregate.value += (aggregateTarget - uniforms.uAggregate.value) * (1 - Math.exp(-5.2 * delta))
+      uniforms.uDent.value += (dentTarget - uniforms.uDent.value) * (1 - Math.exp(-5.4 * delta))
+      uniforms.uPull.value += (pullTarget - uniforms.uPull.value) * (1 - Math.exp(-4.6 * delta))
     }
 
     points.rotation.z = globalRotation
@@ -459,6 +491,15 @@ export function createSculpture(container) {
 
     setEnergy,
 
+    setShape(shape = 'ball') {
+      if (frozen || currentState !== 'sculpt') return
+      scatterTarget = shape === 'burst' ? 1 : 0
+      aggregateTarget = shape === 'aggregate' ? 1 : 0
+      dentTarget = shape === 'dent' ? 1 : 0
+      pullTarget = shape === 'pull' ? 1 : 0
+      ribbonTarget = 0
+    },
+
     // 鼠标左右拖动模拟转腕；纵向移动只保留原来的声音能量映射。
     setInteraction(x, y) {
       if (currentState !== 'sculpt') return
@@ -471,8 +512,14 @@ export function createSculpture(container) {
       progressTarget = clamp01(Number(value) || 0)
     },
 
-    // 第一阶段只开发转腕；保留空接口，避免旧代码调用时报错。
-    burst() {},
+    burst() {
+      if (frozen || currentState !== 'sculpt') return
+      scatterTarget = 1
+      aggregateTarget = 0
+      dentTarget = 0
+      pullTarget = 0
+      ribbonTarget = 0
+    },
 
     freeze(value = true) {
       const next = Boolean(value)
@@ -507,6 +554,10 @@ export function createSculpture(container) {
       twistSmoothed = 0
       twistPersistent = false
       lastTwistInputAt = performance.now()
+      scatterTarget = 0
+      aggregateTarget = 0
+      dentTarget = 0
+      pullTarget = 0
       uniforms.uTime.value = 0
       uniforms.uAudio.value = 0
       uniforms.uTwist.value = 0
@@ -514,6 +565,10 @@ export function createSculpture(container) {
       uniforms.uRibbonMorph.value = 0
       uniforms.uEnergy.value = 0.5
       uniforms.uProgress.value = 0
+      uniforms.uScatter.value = 0
+      uniforms.uAggregate.value = 0
+      uniforms.uDent.value = 0
+      uniforms.uPull.value = 0
       points.rotation.set(0, 0, 0)
     },
 

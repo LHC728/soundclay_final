@@ -57,9 +57,9 @@ let recordingTimeout = 0
 let nodes = []
 let toastTimer = 0
 let pointer = null
-let hintTimer = 0
 let completionTimer = 0
 let isCompleting = false
+let swingCount = 0
 const heldTwistKeys = new Set()
 let socket = null
 let reconnectTimer = 0
@@ -111,6 +111,7 @@ function resetRingEventState(sessionId = activeRingSessionId) {
   freezeStateBySession.clear()
   seenDiscreteEvents.clear()
   discreteEventOrder.length = 0
+  swingCount = 0
 }
 
 function acceptsRingSession(eventType, payload) {
@@ -192,11 +193,30 @@ function handleSocketEvent(message) {
       audio.setMorph({ space: (twist + 1) / 2 })
       break
     }
-    // 第一阶段只接入转腕。burst / push / freeze 会在下一阶段逐个加入。
     case 'burst':
-    case 'push':
-    case 'freeze':
+      if (state === 'sculpt' && !ringFrozen && rememberDiscreteEvent('burst', message.timestamp, payload)) {
+        triggerSwing()
+      }
       break
+    case 'push': {
+      if (state !== 'sculpt' || ringFrozen) break
+      const direction = String(payload.direction || '').toLowerCase()
+      const value = Number(payload.value ?? payload.strength ?? 1)
+      applyShape(direction === 'pull' || value < 0 ? 'pull' : 'dent')
+      break
+    }
+    case 'freeze': {
+      const sessionId = eventSessionId(payload) || activeRingSessionId || 'unknown'
+      const active = payload.active !== false
+      if (freezeStateBySession.get(sessionId) === active) break
+      freezeStateBySession.set(sessionId, active)
+      if (active && state === 'sculpt') completeCreation({ message: '作品已凝固' })
+      else if (!active) {
+        ringFrozen = false
+        sculpture.freeze(false)
+      }
+      break
+    }
     case 'error':
       updateConnectionStatus(payload.message || '戒指连接异常', 'error')
       showToast(payload.recommendedAction || payload.message || '戒指连接异常')
@@ -311,30 +331,32 @@ function render() {
 
   if (state === 'sculpt') {
     copy.innerHTML = `
-      <h1 class="title">转动手腕，展开声音</h1>
-      <p class="subtitle">万花筒会平滑展开为横向粒子条带，并跟随手腕整体旋转与扭曲。</p>
+      <h1 class="title">用动作雕刻万花筒</h1>
+      <p class="subtitle">转腕成球 · 第一次挥动爆散 · 第二次挥动聚合 · 前推压凹 · 后拉放大 · 双击凝固</p>
     `
-    const interactionHint = ringConnected
-      ? '转动手腕：展开、旋转与扭曲'
-      : '鼠标左右拖动，或按住 ← / → 测试转腕'
     controls.innerHTML = `
       <div class="sculpt-hud">
         <div class="timeline" aria-label="作品播放进度">
           <div class="timeline-track"><div class="timeline-progress"></div></div>
           ${nodes.map((node) => `<span class="timeline-node" style="left:${node.progress * 100}%"></span>`).join('')}
         </div>
-        <div class="hint" id="sculpt-hint">${interactionHint}</div>
+        <div class="hint" id="sculpt-hint">拖动转腕 · 快甩切换爆散/聚合 · 缓慢上推压凹 · 缓慢下拉放大 · 双击凝固</div>
+        <div class="gesture-actions" aria-label="雕刻动作模拟">
+          <button class="gesture-button" id="ball-button">转腕成球</button>
+          <button class="gesture-button" id="swing-button">挥动：爆散 / 聚合</button>
+          <button class="gesture-button" id="dent-button">向前推：压扁凹陷</button>
+          <button class="gesture-button" id="pull-button">向后拉：放大拉起</button>
+        </div>
         <div class="sculpt-actions">
           <button class="finish-button" id="finish-button">凝固作品</button>
         </div>
       </div>
     `
+    document.querySelector('#ball-button').addEventListener('click', () => applyShape('ball'))
+    document.querySelector('#swing-button').addEventListener('click', triggerSwing)
+    document.querySelector('#dent-button').addEventListener('click', () => applyShape('dent'))
+    document.querySelector('#pull-button').addEventListener('click', () => applyShape('pull'))
     document.querySelector('#finish-button').addEventListener('click', finishCreation)
-    clearTimeout(hintTimer)
-    hintTimer = window.setTimeout(() => {
-      const hint = document.querySelector('#sculpt-hint')
-      if (hint) hint.style.opacity = '0'
-    }, 3400)
     return
   }
 
@@ -413,10 +435,12 @@ function enterSculpt() {
   nodes = []
   ringFrozen = false
   isCompleting = false
+  swingCount = 0
   clearTimeout(completionTimer)
   sculpture.freeze(false)
   sculpture.setPreviewRotation(0)
   sculpture.setTwist(0)
+  sculpture.setShape('ball')
   audio.setMode(mode)
   // 浏览器只保留静音分析和进度，实际声音由 Ableton Live 播放。
   audio.playLoop({ muted: true })
@@ -424,6 +448,26 @@ function enterSculpt() {
   void triggerAbletonScene().catch((error) => {
     showError(error instanceof Error ? error.message : '无法触发 Ableton Live。')
   })
+}
+
+function applyShape(shape) {
+  if (state !== 'sculpt' || ringFrozen) return
+  sculpture.setShape(shape)
+  const labels = {
+    ball: '转腕成球',
+    burst: '粒子爆散',
+    aggregate: '粒子聚合',
+    dent: '向前压凹',
+    pull: '向后拉起',
+  }
+  showToast(labels[shape] || '形态已改变')
+}
+
+function triggerSwing() {
+  if (state !== 'sculpt' || ringFrozen) return
+  const shape = swingCount % 2 === 0 ? 'burst' : 'aggregate'
+  swingCount += 1
+  applyShape(shape)
 }
 
 async function triggerAbletonScene() {
@@ -558,6 +602,7 @@ function restart() {
   nodes = []
   resetRingEventState(null)
   mode = 0.5
+  swingCount = 0
   sculpture.reset()
   sculpture.setMode(mode)
   sculpture.setProgress(0)
@@ -632,6 +677,11 @@ function finishPointer(event) {
 
 interactionLayer.addEventListener('pointerup', finishPointer)
 interactionLayer.addEventListener('pointercancel', finishPointer)
+interactionLayer.addEventListener('dblclick', (event) => {
+  if (state !== 'sculpt' || ringFrozen) return
+  event.preventDefault()
+  completeCreation({ message: '作品已凝固' })
+})
 
 function applyKeyboardTwist() {
   if (state !== 'sculpt' || ringFrozen) return
@@ -686,12 +736,22 @@ window.addEventListener('soundclay:gesture', (event) => {
       audio.setMorph({ space: (x + 1) / 2 })
       break
     }
-    // 第一阶段只响应 rotate，其余手势暂不处理。
     case 'lift':
+      applyShape('pull')
+      audio.setMorph({ energy: Math.min(1, strength) })
+      break
     case 'press':
+      applyShape('dent')
+      audio.setMorph({ energy: 1 - Math.min(1, strength) })
+      break
     case 'tap':
+      addNode()
+      break
     case 'hold':
+      if (detail.active !== false) completeCreation({ message: '作品已凝固' })
+      break
     case 'swipe':
+      triggerSwing()
       break
     default:
       break
