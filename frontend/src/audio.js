@@ -91,6 +91,7 @@ export class SoundClayAudio {
     this.buffer = null
     this.source = null
     this.graph = null
+    this.output = null
     this.monitorFrame = 0
     this.startedAt = 0
     this.startOffset = 0
@@ -291,12 +292,15 @@ export class SoundClayAudio {
     if (this.graph) this.applyParameters(this.graph)
   }
 
-  playLoop() {
+  playLoop({ muted = false } = {}) {
     if (!this.buffer) return false
     if (this.playing) return true
 
     const context = this.context
-    this.graph = this.buildGraph(context, context.destination)
+    this.output = context.createGain()
+    this.output.gain.value = muted ? 0 : 1
+    this.output.connect(context.destination)
+    this.graph = this.buildGraph(context, this.output)
     this.source = context.createBufferSource()
     this.source.buffer = this.buffer
     this.source.loop = this.loop
@@ -329,6 +333,8 @@ export class SoundClayAudio {
 
     this.source = null
     this.graph = null
+    this.output?.disconnect()
+    this.output = null
     this.playing = false
     cancelAnimationFrame(this.monitorFrame)
     this.onLevel(0)

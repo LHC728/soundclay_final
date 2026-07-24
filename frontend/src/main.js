@@ -57,9 +57,10 @@ let recordingTimeout = 0
 let nodes = []
 let toastTimer = 0
 let pointer = null
-let holdTimer = 0
-let isHolding = false
 let hintTimer = 0
+let completionTimer = 0
+let isCompleting = false
+const heldTwistKeys = new Set()
 let socket = null
 let reconnectTimer = 0
 let reconnectDelay = 800
@@ -103,6 +104,10 @@ function eventSessionId(payload = {}) {
 function resetRingEventState(sessionId = activeRingSessionId) {
   activeRingSessionId = sessionId
   ringFrozen = false
+  isCompleting = false
+  clearTimeout(completionTimer)
+  sculpture.freeze(false)
+  sculpture.setTwist(0)
   freezeStateBySession.clear()
   seenDiscreteEvents.clear()
   discreteEventOrder.length = 0
@@ -126,7 +131,8 @@ function acceptsRingSession(eventType, payload) {
 
 function rememberDiscreteEvent(eventType, timestamp, payload) {
   const sessionId = eventSessionId(payload) || activeRingSessionId || 'unknown'
-  const discriminator = payload.sequence ?? timestamp
+  const discriminator = payload.sequence ?? payload.deviceTimestampMs ?? timestamp
+  if (discriminator == null) return true
   const key = `${sessionId}:${eventType}:${discriminator}`
   if (seenDiscreteEvents.has(key)) return false
   seenDiscreteEvents.add(key)
@@ -173,36 +179,24 @@ function handleSocketEvent(message) {
       if (state !== 'sculpt' || ringFrozen) break
       const twist = Math.min(1, Math.max(-1, Number(payload.twist) || 0))
       const energy = Math.min(1, Math.max(0, Number(payload.accelMag) || 0))
-      sculpture.setInteraction(twist, 1 - energy * 2)
+      sculpture.setTwist(twist)
+      sculpture.setEnergy(energy)
       audio.setMorph({ space: (twist + 1) / 2, energy })
       break
     }
     case 'twist': {
       if (state !== 'sculpt' || ringFrozen) break
-      const legacy = Math.min(1, Math.max(0, Number(payload.value) || 0))
-      const twist = legacy * 2 - 1
-      sculpture.setInteraction(twist, 0)
-      audio.setMorph({ space: legacy })
+      // 最终硬件接口的 value 已经是 -1 ~ 1，不能再次从 0 ~ 1 映射。
+      const twist = Math.min(1, Math.max(-1, Number(payload.value) || 0))
+      sculpture.setTwist(twist)
+      audio.setMorph({ space: (twist + 1) / 2 })
       break
     }
+    // 第一阶段只接入转腕。burst / push / freeze 会在下一阶段逐个加入。
     case 'burst':
-      if (state === 'sculpt' && !ringFrozen && rememberDiscreteEvent('burst', message.timestamp, payload)) {
-        sculpture.burst(Math.min(1, Math.max(0, Number(payload.strength) || 0)))
-        showToast('爆散')
-      }
+    case 'push':
+    case 'freeze':
       break
-    case 'freeze': {
-      const sessionId = eventSessionId(payload) || activeRingSessionId || 'unknown'
-      const active = payload.active !== false
-      if (freezeStateBySession.get(sessionId) === active) break
-      freezeStateBySession.set(sessionId, active)
-      ringFrozen = active
-      sculpture.freeze(active)
-      if (active) audio.stopPlayback()
-      else audio.playLoop()
-      showToast(active ? '已凝固' : '继续流动')
-      break
-    }
     case 'error':
       updateConnectionStatus(payload.message || '戒指连接异常', 'error')
       showToast(payload.recommendedAction || payload.message || '戒指连接异常')
@@ -242,6 +236,12 @@ function modeName() {
   if (mode < 0.38) return '释放'
   if (mode > 0.62) return '舒缓'
   return '混合'
+}
+
+// mode 的语义是：1 = 舒缓（滑块左侧），0 = 释放（滑块右侧）。
+// 预览旋转使用：-1 = 向左旋转，0 = 停止，1 = 向右旋转。
+function modePreviewDirection() {
+  return (1 - mode) * 2 - 1
 }
 
 function resultName() {
@@ -311,18 +311,21 @@ function render() {
 
   if (state === 'sculpt') {
     copy.innerHTML = `
-      <h1 class="title">用动作塑造它</h1>
-      <p class="subtitle">左右展开 · 上下改变力量 · 轻点留下节点</p>
+      <h1 class="title">转动手腕，展开声音</h1>
+      <p class="subtitle">万花筒会平滑展开为横向粒子条带，并跟随手腕整体旋转与扭曲。</p>
     `
+    const interactionHint = ringConnected
+      ? '转动手腕：展开、旋转与扭曲'
+      : '鼠标左右拖动，或按住 ← / → 测试转腕'
     controls.innerHTML = `
       <div class="sculpt-hud">
         <div class="timeline" aria-label="作品播放进度">
           <div class="timeline-track"><div class="timeline-progress"></div></div>
           ${nodes.map((node) => `<span class="timeline-node" style="left:${node.progress * 100}%"></span>`).join('')}
         </div>
-        <div class="hint" id="sculpt-hint">移动 · 旋转 · 点击</div>
+        <div class="hint" id="sculpt-hint">${interactionHint}</div>
         <div class="sculpt-actions">
-          <button class="finish-button" id="finish-button">完成</button>
+          <button class="finish-button" id="finish-button">凝固作品</button>
         </div>
       </div>
     `
@@ -341,7 +344,7 @@ function render() {
   `
   controls.innerHTML = `
     <div class="result-actions">
-      <button class="icon-button" id="play-button" aria-label="播放或暂停">${audio.playing ? icons.pause : icons.play}</button>
+      <button class="icon-button" id="play-button" aria-label="在 Ableton Live 中播放">${icons.play}</button>
       <button class="icon-button" id="share-button" aria-label="分享作品">${icons.share}</button>
       <button class="icon-button" id="restart-button" aria-label="重新开始">${icons.restart}</button>
     </div>
@@ -387,7 +390,6 @@ async function stopRecording() {
   try {
     await audio.stopRecording()
     setMode(0.5)
-    audio.playLoop()
     setState('mode')
   } catch (error) {
     showError(error instanceof Error ? error.message : '无法完成录音。')
@@ -397,6 +399,7 @@ async function stopRecording() {
 function setMode(value) {
   mode = Math.min(1, Math.max(0, value))
   sculpture.setMode(mode)
+  sculpture.setPreviewRotation(modePreviewDirection())
   audio.setMode(mode)
 
   const labels = document.querySelector('.mode-labels')
@@ -409,14 +412,30 @@ function setMode(value) {
 function enterSculpt() {
   nodes = []
   ringFrozen = false
+  isCompleting = false
+  clearTimeout(completionTimer)
+  sculpture.freeze(false)
+  sculpture.setPreviewRotation(0)
+  sculpture.setTwist(0)
   audio.setMode(mode)
-  audio.playLoop()
+  // 浏览器只保留静音分析和进度，实际声音由 Ableton Live 播放。
+  audio.playLoop({ muted: true })
   setState('sculpt')
-  void fetch(`${API_BASE}/api/mode/select`, {
+  void triggerAbletonScene().catch((error) => {
+    showError(error instanceof Error ? error.message : '无法触发 Ableton Live。')
+  })
+}
+
+async function triggerAbletonScene() {
+  const response = await fetch(`${API_BASE}/api/mode/select`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ mode: mode < 0.5 ? 'express' : 'soothe' }),
-  }).catch(() => {})
+  })
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}))
+    throw new Error(detail.detail || `无法触发 Ableton Live（HTTP ${response.status}）。`)
+  }
 }
 
 function showToast(message = '已留下') {
@@ -432,19 +451,46 @@ function addNode() {
     ? ((audio.context.currentTime - audio.startedAt) % audio.duration) / audio.duration
     : 0
   nodes.push({ progress, mode, space: audio.space, energy: audio.energy })
-  sculpture.burst(0.74)
   showToast('已留下')
   render()
 }
 
-function finishCreation() {
-  sculpture.burst(1)
-  setState('result')
+function completeCreation({ message = '作品已凝固', burst = false } = {}) {
+  if (state !== 'sculpt' || ringFrozen || isCompleting) return
+  isCompleting = true
+
+  if (burst) {
+    sculpture.burst(0.72)
+    showToast('正在凝固')
+  }
+
+  const finalize = () => {
+    completionTimer = 0
+    ringFrozen = true
+    sculpture.setTwist(0)
+    sculpture.freeze(true)
+    audio.stopPlayback()
+    setState('result')
+    showToast(message)
+    isCompleting = false
+  }
+
+  if (burst) completionTimer = window.setTimeout(finalize, 260)
+  else finalize()
 }
 
-function togglePlayback() {
-  audio.togglePlayback()
-  render()
+function finishCreation() {
+  // 当前阶段用页面按钮结束，不接入双击戒指。
+  completeCreation({ message: '作品已完成', burst: false })
+}
+
+async function togglePlayback() {
+  try {
+    await triggerAbletonScene()
+    showToast('已在 Ableton Live 中播放')
+  } catch (error) {
+    showError(error instanceof Error ? error.message : '无法触发 Ableton Live。')
+  }
 }
 
 async function shareWork() {
@@ -494,12 +540,13 @@ function downloadBlob(blob, name) {
 function restart() {
   clearTimeout(recordingTimeout)
   clearInterval(recordingTimer)
+  clearTimeout(completionTimer)
   audio.reset()
   nodes = []
   resetRingEventState(null)
   mode = 0.5
+  sculpture.reset()
   sculpture.setMode(mode)
-  sculpture.setInteraction(0, 0)
   sculpture.setProgress(0)
   setState('idle')
 }
@@ -528,16 +575,12 @@ interactionLayer.addEventListener('pointerdown', (event) => {
   pointer = { id: event.pointerId, startX: event.clientX, startY: event.clientY, moved: false, point }
 
   if (state === 'mode') {
-    setMode((point.x + 1) / 2)
+    // 屏幕左侧 = 舒缓，屏幕右侧 = 释放。
+    const sliderPosition = (point.x + 1) / 2
+    setMode(1 - sliderPosition)
     return
   }
 
-  isHolding = false
-  holdTimer = window.setTimeout(() => {
-    isHolding = true
-    sculpture.freeze(true)
-    showToast('凝固')
-  }, 520)
 })
 
 interactionLayer.addEventListener('pointermove', (event) => {
@@ -548,8 +591,9 @@ interactionLayer.addEventListener('pointermove', (event) => {
   if (movedDistance > 7) pointer.moved = true
 
   if (state === 'mode') {
-    setMode((point.x + 1) / 2)
-    sculpture.setInteraction(point.x, point.y)
+    // 选择模式只旋转完整万花筒，不触发横向条带。
+    const sliderPosition = (point.x + 1) / 2
+    setMode(1 - sliderPosition)
     return
   }
 
@@ -564,36 +608,50 @@ interactionLayer.addEventListener('pointermove', (event) => {
 
 function finishPointer(event) {
   if (!pointer || pointer.id !== event.pointerId) return
-  clearTimeout(holdTimer)
 
   if (state === 'sculpt') {
-    if (isHolding) {
-      sculpture.freeze(false)
-      showToast('继续流动')
-    } else if (!pointer.moved) {
-      addNode()
-    }
+    sculpture.setTwist(0)
+    if (!pointer.moved) addNode()
   }
 
   pointer = null
-  isHolding = false
 }
 
 interactionLayer.addEventListener('pointerup', finishPointer)
 interactionLayer.addEventListener('pointercancel', finishPointer)
 
+function applyKeyboardTwist() {
+  if (state !== 'sculpt' || ringFrozen) return
+  const left = heldTwistKeys.has('ArrowLeft') || heldTwistKeys.has('KeyA')
+  const right = heldTwistKeys.has('ArrowRight') || heldTwistKeys.has('KeyD')
+  sculpture.setTwist(left === right ? 0 : left ? -0.88 : 0.88, true)
+}
+
 window.addEventListener('keydown', (event) => {
   if (event.code === 'Space' && ['sculpt', 'result'].includes(state)) {
     event.preventDefault()
     togglePlayback()
+    return
+  }
+
+  if (['ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD'].includes(event.code) && state === 'sculpt') {
+    event.preventDefault()
+    heldTwistKeys.add(event.code)
+    applyKeyboardTwist()
+    return
   }
 
   if (event.key.toLowerCase() === 'r' && state === 'sculpt') {
     nodes.pop()
-    sculpture.burst(0.35)
     showToast('已撤回')
     render()
   }
+})
+
+window.addEventListener('keyup', (event) => {
+  if (!['ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD'].includes(event.code)) return
+  heldTwistKeys.delete(event.code)
+  applyKeyboardTwist()
 })
 
 window.addEventListener('soundclay:gesture', (event) => {
@@ -601,7 +659,8 @@ window.addEventListener('soundclay:gesture', (event) => {
   const strength = Math.min(1.5, Math.max(0, Number(detail.strength ?? 1)))
 
   if (state === 'mode' && typeof detail.x === 'number') {
-    setMode((Math.min(1, Math.max(-1, detail.x)) + 1) / 2)
+    const sliderPosition = (Math.min(1, Math.max(-1, detail.x)) + 1) / 2
+    setMode(1 - sliderPosition)
     return
   }
 
@@ -610,30 +669,16 @@ window.addEventListener('soundclay:gesture', (event) => {
   switch (detail.type) {
     case 'rotate': {
       const x = Math.min(1, Math.max(-1, Number(detail.x ?? detail.value ?? 0)))
-      sculpture.setInteraction(x, 0)
+      sculpture.setTwist(x)
       audio.setMorph({ space: (x + 1) / 2 })
       break
     }
-    case 'lift': {
-      const energy = Math.min(1, Math.max(0, Number(detail.value ?? strength)))
-      sculpture.setInteraction(0, 1 - energy * 2)
-      audio.setMorph({ energy })
-      break
-    }
-    case 'press': {
-      const energy = 1 - Math.min(1, strength)
-      sculpture.setInteraction(0, 1 - energy * 2)
-      audio.setMorph({ energy })
-      break
-    }
+    // 第一阶段只响应 rotate，其余手势暂不处理。
+    case 'lift':
+    case 'press':
     case 'tap':
-      addNode()
-      break
     case 'hold':
-      sculpture.freeze(Boolean(detail.active ?? true))
-      break
     case 'swipe':
-      sculpture.burst(strength)
       break
     default:
       break
@@ -645,5 +690,6 @@ connectRingSocket()
 
 window.addEventListener('beforeunload', () => {
   clearTimeout(reconnectTimer)
+  clearTimeout(completionTimer)
   socket?.close()
 })

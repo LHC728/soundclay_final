@@ -2,21 +2,44 @@ import * as THREE from 'three'
 
 const CONFIG = {
   sides: 10,
-  baseParticles: 95,
+  baseParticles: 105,
   maxRadius: 2.35,
   pointSize: 0.082,
   maxPixelRatio: 1.35,
-  targetFps: 45,
+  targetFps: 50,
+  cameraZ: 8.6,
+  cameraFov: 36,
+  ribbonViewportFill: 0.94,
+  // 选择模式预览：滑块越靠边，完整万花筒旋转越快。
+  previewRotationSpeed: 1.15,
+  previewRotationResponse: 7.5,
+  maxRotationSpeed: 2.15,
+  ribbonTwistSpeed: 1.35,
+  twistDeadZone: 0.055,
+  twistTimeoutMs: 180,
+  twistResponse: 12,
+  ribbonMorphResponse: 2.8,
 }
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value))
+const clampSigned = (value) => Math.min(1, Math.max(-1, value))
 
 function seededRandom(seed) {
   const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453
   return value - Math.floor(value)
 }
 
+function gaussianLike(seedA, seedB, seedC) {
+  return (
+    seededRandom(seedA) +
+    seededRandom(seedB) +
+    seededRandom(seedC) -
+    1.5
+  ) / 1.5
+}
+
 function buildGeometry() {
+  // 仍然是原来的数量：105 × 10 × 2 = 2100 个粒子。
   const total = CONFIG.baseParticles * CONFIG.sides * 2
   const positions = new Float32Array(total * 3)
   const radii = new Float32Array(total)
@@ -24,6 +47,11 @@ function buildGeometry() {
   const depths = new Float32Array(total)
   const phases = new Float32Array(total)
   const seeds = new Float32Array(total)
+
+  // 同一批粒子在“转腕后”的稳定条带目标坐标。
+  const ribbonU = new Float32Array(total)
+  const ribbonV = new Float32Array(total)
+  const ribbonZ = new Float32Array(total)
 
   const sectorAngle = (Math.PI * 2) / CONFIG.sides
   const halfSector = sectorAngle / 2
@@ -43,6 +71,7 @@ function buildGeometry() {
         const angle = center + (mirror === 0 ? localAngle : -localAngle)
         const offset = index * 3
 
+        // 初始位置保持原来的万花筒。
         positions[offset] = Math.cos(angle) * radius
         positions[offset + 1] = Math.sin(angle) * radius
         positions[offset + 2] = depth
@@ -50,7 +79,17 @@ function buildGeometry() {
         angles[index] = angle
         depths[index] = depth
         phases[index] = phase
-        seeds[index] = (seed + sector / CONFIG.sides) % 1
+        seeds[index] = seed
+
+        // 条带沿整块画布横向铺开。两端自然收窄，中间更丰厚。
+        const u = seededRandom(index + 1200) * 2 - 1
+        const edgeTaper = Math.pow(Math.max(0, 1 - Math.abs(u)), 0.34)
+        const thickness = gaussianLike(index + 2200, index + 3200, index + 4200)
+        const depthCloud = gaussianLike(index + 5200, index + 6200, index + 7200)
+
+        ribbonU[index] = u
+        ribbonV[index] = thickness * edgeTaper
+        ribbonZ[index] = depthCloud * edgeTaper
         index += 1
       }
     }
@@ -63,7 +102,10 @@ function buildGeometry() {
   geometry.setAttribute('aDepth', new THREE.BufferAttribute(depths, 1))
   geometry.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1))
   geometry.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1))
-  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), CONFIG.maxRadius * 2.2)
+  geometry.setAttribute('aRibbonU', new THREE.BufferAttribute(ribbonU, 1))
+  geometry.setAttribute('aRibbonV', new THREE.BufferAttribute(ribbonV, 1))
+  geometry.setAttribute('aRibbonZ', new THREE.BufferAttribute(ribbonZ, 1))
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 20)
   return geometry
 }
 
@@ -73,10 +115,11 @@ const vertexShader = /* glsl */ `
   uniform float uTime;
   uniform float uAudio;
   uniform float uMode;
-  uniform float uPointerX;
-  uniform float uPointerY;
+  uniform float uTwist;
+  uniform float uRibbonTwist;
+  uniform float uRibbonMorph;
+  uniform float uRibbonHalfWidth;
   uniform float uEnergy;
-  uniform float uBurst;
   uniform float uPointScale;
   uniform float uProgress;
   uniform float uState;
@@ -86,11 +129,15 @@ const vertexShader = /* glsl */ `
   attribute float aDepth;
   attribute float aPhase;
   attribute float aSeed;
+  attribute float aRibbonU;
+  attribute float aRibbonV;
+  attribute float aRibbonZ;
 
   varying vec3 vColor;
   varying float vAlpha;
 
   vec3 palette(float t, float mode) {
+    // 颜色体系完全沿用原项目。
     vec3 expressA = vec3(1.00, 0.20, 0.10);
     vec3 expressB = vec3(1.00, 0.72, 0.18);
     vec3 expressC = vec3(0.92, 0.14, 0.60);
@@ -107,41 +154,72 @@ const vertexShader = /* glsl */ `
 
   void main() {
     float radiusRatio = aRadius / ${CONFIG.maxRadius.toFixed(2)};
-    float release = 1.0 - uMode;
     float calm = uMode;
 
-    float speed = mix(1.24, 0.42, calm);
-    float breathing = 1.0 + sin(uTime * speed + aPhase) * mix(0.072, 0.035, calm);
-    float soundPush = uAudio * mix(0.50, 0.24, calm) * (0.24 + radiusRatio);
-    float energyPush = (uEnergy - 0.5) * mix(0.50, 0.28, calm) * radiusRatio;
-    float burstPush = uBurst * (0.34 + radiusRatio * 0.48);
+    // 1. 初始万花筒：保持原形态与原有呼吸感。
+    float speed = mix(1.18, 0.40, calm);
+    float breathing = 1.0 + sin(uTime * speed + aPhase) * mix(0.070, 0.032, calm);
+    float soundPush = uAudio * mix(0.48, 0.22, calm) * (0.24 + radiusRatio);
+    float energyPush = (uEnergy - 0.5) * mix(0.42, 0.24, calm) * radiusRatio;
+    float kaleidoRadius = aRadius * breathing + soundPush + energyPush;
+    float kaleidoRipple = sin(aRadius * 5.0 - uTime * mix(2.0, 0.68, calm) + aPhase)
+      * mix(0.070, 0.032, calm);
 
-    float sculptRadius = aRadius * breathing + soundPush + energyPush + burstPush;
-    float turnSpeed = mix(0.14, 0.052, calm);
-    float pointerTwist = uPointerX * radiusRatio * mix(0.72, 0.38, calm);
-    float organicTwist = sin(uTime * mix(0.74, 0.35, calm) + aRadius * 2.6 + aPhase) * mix(0.055, 0.025, calm);
-    float angle = aAngle + uTime * turnSpeed + pointerTwist + organicTwist;
+    vec3 kaleido = vec3(
+      cos(aAngle) * kaleidoRadius,
+      sin(aAngle) * kaleidoRadius,
+      aDepth + kaleidoRipple + uAudio * sin(aPhase) * 0.11
+    );
 
-    float vertical = uPointerY * 0.20 * (0.35 + radiusRatio);
-    float ripple = sin(aRadius * 5.2 - uTime * mix(2.2, 0.7, calm) + aPhase) * mix(0.075, 0.035, calm);
-    float depth = aDepth + ripple + vertical + uAudio * sin(aPhase) * 0.12;
+    // 2. 转腕后目标形态：贯穿画布的粒子条带 / 横向星云。
+    float u = aRibbonU;
+    float edgeTaper = pow(max(0.0, 1.0 - abs(u)), 0.34);
 
-    vec3 p = vec3(cos(angle) * sculptRadius, sin(angle) * sculptRadius, depth);
+    // 条带中心线有大波浪与细波纹，但不是规则矩形。
+    float centerWave =
+      sin(u * 4.65 + 0.35) * 0.24 +
+      sin(u * 10.8 + aPhase * 0.22) * 0.055;
 
-    float stageScale = mix(0.96, 1.05, smoothstep(0.0, 3.0, uState));
+    float ribbonX = u * uRibbonHalfWidth;
+    float ribbonY = centerWave + aRibbonV * 0.58 + sin(aPhase + uTime * 0.30) * 0.025;
+    float ribbonZ = aRibbonZ * 0.72 + sin(u * 8.2 + aPhase) * 0.045;
+
+    // 声音只让条带轻微呼吸，不会改变粒子数量或主轮廓。
+    ribbonY *= 1.0 + uAudio * 0.10;
+    ribbonZ += uAudio * sin(aPhase) * 0.075;
+
+    // 沿条带长度方向做立体扭转。
+    float localTwistAngle = uRibbonTwist * u * 1.55;
+    float cosTwist = cos(localTwistAngle);
+    float sinTwist = sin(localTwistAngle);
+    float twistedY = ribbonY * cosTwist - ribbonZ * sinTwist;
+    float twistedZ = ribbonY * sinTwist + ribbonZ * cosTwist;
+
+    vec3 ribbon = vec3(ribbonX, twistedY, twistedZ);
+
+    // 第一次明显转腕后平滑展开；之后保持条带，不回到万花筒。
+    float morph = smoothstep(0.0, 1.0, uRibbonMorph);
+    vec3 p = mix(kaleido, ribbon, morph);
+
+    float stageScale = mix(0.96, 1.03, smoothstep(0.0, 3.0, uState));
     p *= stageScale;
 
     vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
     gl_Position = projectionMatrix * mvPosition;
 
     float perspective = uPointScale / max(-mvPosition.z, 0.2);
-    float sizePulse = 1.0 + uAudio * 1.45 + uBurst * 0.75;
+    float sizePulse = 1.0 + uAudio * 1.25;
     gl_PointSize = ${CONFIG.pointSize.toFixed(3)} * perspective * sizePulse * mix(1.05, 0.88, radiusRatio);
 
-    float colorT = fract(aSeed + uTime * mix(0.038, 0.014, calm) + uPointerX * 0.08 + uProgress * 0.04);
+    float colorT = fract(aSeed + uTime * mix(0.034, 0.012, calm) + uProgress * 0.04);
     vColor = palette(colorT, uMode);
     vColor *= 0.72 + 0.58 * (1.0 - radiusRatio) + uAudio * 0.42;
-    vAlpha = mix(0.78, 0.96, 1.0 - radiusRatio) * (0.82 + uAudio * 0.18);
+
+    // 两端略微消散，让条带更像星云。
+    float ribbonEdgeAlpha = mix(1.0, 0.52 + 0.48 * edgeTaper, morph);
+    vAlpha = mix(0.78, 0.96, 1.0 - radiusRatio)
+      * (0.82 + uAudio * 0.18)
+      * ribbonEdgeAlpha;
   }
 `
 
@@ -169,8 +247,8 @@ export function createSculpture(container) {
   }
 
   const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100)
-  camera.position.set(0, 0, 7.0)
+  const camera = new THREE.PerspectiveCamera(CONFIG.cameraFov, 1, 0.1, 100)
+  camera.position.set(0, 0, CONFIG.cameraZ)
 
   const renderer = new THREE.WebGLRenderer({
     antialias: false,
@@ -190,10 +268,11 @@ export function createSculpture(container) {
     uTime: { value: 0 },
     uAudio: { value: 0 },
     uMode: { value: 0.5 },
-    uPointerX: { value: 0 },
-    uPointerY: { value: 0 },
+    uTwist: { value: 0 },
+    uRibbonTwist: { value: 0 },
+    uRibbonMorph: { value: 0 },
+    uRibbonHalfWidth: { value: 4 },
     uEnergy: { value: 0.5 },
-    uBurst: { value: 0 },
     uPointScale: { value: 320 },
     uProgress: { value: 0 },
     uState: { value: 0 },
@@ -219,15 +298,23 @@ export function createSculpture(container) {
   let destroyed = false
   let visible = true
   let frozen = false
+  let currentState = 'idle'
   let visualTime = 0
+  let globalRotation = 0
+  let previewRotationTarget = 0
+  let previewRotationSmoothed = 0
+  let ribbonTwistMemory = 0
+  let ribbonMorph = 0
+  let ribbonTarget = 0
   let audioTarget = 0
   let modeTarget = 0.5
-  let xTarget = 0
-  let yTarget = 0
   let energyTarget = 0.5
-  let burstTarget = 0
   let stateTarget = 0
   let progressTarget = 0
+  let twistTarget = 0
+  let twistSmoothed = 0
+  let twistPersistent = false
+  let lastTwistInputAt = 0
 
   function resize() {
     const width = Math.max(1, container.clientWidth)
@@ -235,12 +322,45 @@ export function createSculpture(container) {
     camera.aspect = width / height
     camera.updateProjectionMatrix()
     renderer.setSize(width, height, false)
+
+    // 根据相机视野计算条带长度：无论 16:9、21:9，都铺到约 94% 画布宽度。
+    const verticalVisible = 2 * Math.tan(THREE.MathUtils.degToRad(CONFIG.cameraFov * 0.5)) * CONFIG.cameraZ
+    const horizontalVisible = verticalVisible * camera.aspect
+    uniforms.uRibbonHalfWidth.value = horizontalVisible * CONFIG.ribbonViewportFill * 0.5
     uniforms.uPointScale.value = height * renderer.getPixelRatio() * 0.58
   }
 
   const resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(container)
   resize()
+
+  function normalizedTwist(value) {
+    const input = clampSigned(Number(value) || 0)
+    const magnitude = Math.abs(input)
+    if (magnitude <= CONFIG.twistDeadZone) return 0
+    const remapped = (magnitude - CONFIG.twistDeadZone) / (1 - CONFIG.twistDeadZone)
+    return Math.sign(input) * Math.pow(remapped, 1.22)
+  }
+
+  function setPreviewRotation(value) {
+    if (frozen) return
+    previewRotationTarget = clampSigned(Number(value) || 0)
+  }
+
+  function setTwist(value, persistent = false) {
+    if (frozen || currentState !== 'sculpt') return
+    twistTarget = normalizedTwist(value)
+    twistPersistent = Boolean(persistent) && twistTarget !== 0
+    lastTwistInputAt = performance.now()
+
+    // 只有雕刻页面第一次检测到明确转腕，才把万花筒变成横向条带。
+    if (Math.abs(twistTarget) > 0.01) ribbonTarget = 1
+  }
+
+  function setEnergy(value) {
+    if (frozen) return
+    energyTarget = clamp01(Number(value) || 0)
+  }
 
   function renderFrame(timestamp) {
     if (destroyed) return
@@ -252,21 +372,50 @@ export function createSculpture(container) {
     lastFrame = timestamp - ((timestamp - lastFrame) % frameInterval)
 
     const delta = Math.min(clock.getDelta(), 0.05)
-    if (!frozen) visualTime += delta
 
-    uniforms.uTime.value = visualTime
-    uniforms.uAudio.value += (audioTarget - uniforms.uAudio.value) * 0.22
-    uniforms.uMode.value += (modeTarget - uniforms.uMode.value) * 0.08
-    uniforms.uPointerX.value += (xTarget - uniforms.uPointerX.value) * 0.11
-    uniforms.uPointerY.value += (yTarget - uniforms.uPointerY.value) * 0.11
-    uniforms.uEnergy.value += (energyTarget - uniforms.uEnergy.value) * 0.10
-    uniforms.uState.value += (stateTarget - uniforms.uState.value) * 0.08
-    uniforms.uProgress.value += (progressTarget - uniforms.uProgress.value) * 0.16
-    uniforms.uBurst.value += (burstTarget - uniforms.uBurst.value) * 0.22
-    burstTarget *= 0.84
+    if (!frozen) {
+      visualTime += delta
 
-    points.rotation.x = uniforms.uPointerY.value * 0.14
-    points.rotation.z = Math.sin(visualTime * 0.16) * 0.018
+      if (!twistPersistent && performance.now() - lastTwistInputAt > CONFIG.twistTimeoutMs) {
+        twistTarget = 0
+      }
+
+      // 选择模式：滑块只驱动完整万花筒整体旋转，不改变粒子形状。
+      const previewBlend = 1 - Math.exp(-CONFIG.previewRotationResponse * delta)
+      const previewTarget = currentState === 'mode' ? previewRotationTarget : 0
+      previewRotationSmoothed += (previewTarget - previewRotationSmoothed) * previewBlend
+      globalRotation -= previewRotationSmoothed * CONFIG.previewRotationSpeed * delta
+
+      // 雕刻模式：戒指转腕才会展开横向条带并继续整体旋转、扭曲。
+      const twistBlend = 1 - Math.exp(-CONFIG.twistResponse * delta)
+      twistSmoothed += (twistTarget - twistSmoothed) * twistBlend
+      if (currentState === 'sculpt') {
+        globalRotation -= twistSmoothed * CONFIG.maxRotationSpeed * delta
+      }
+      if (Math.abs(globalRotation) > Math.PI * 8) globalRotation %= Math.PI * 2
+
+      // 扭曲是累计雕刻结果；停手后保留，反向转腕可反向拧回。
+      if (currentState === 'sculpt') {
+        ribbonTwistMemory += twistSmoothed * CONFIG.ribbonTwistSpeed * delta
+      }
+      ribbonTwistMemory = Math.min(Math.PI * 3.2, Math.max(-Math.PI * 3.2, ribbonTwistMemory))
+
+      const morphBlend = 1 - Math.exp(-CONFIG.ribbonMorphResponse * delta)
+      ribbonMorph += (ribbonTarget - ribbonMorph) * morphBlend
+
+      uniforms.uTime.value = visualTime
+      uniforms.uAudio.value += (audioTarget - uniforms.uAudio.value) * (1 - Math.exp(-11 * delta))
+      uniforms.uMode.value += (modeTarget - uniforms.uMode.value) * (1 - Math.exp(-5.2 * delta))
+      uniforms.uTwist.value = twistSmoothed
+      uniforms.uRibbonTwist.value = ribbonTwistMemory
+      uniforms.uRibbonMorph.value = ribbonMorph
+      uniforms.uEnergy.value += (energyTarget - uniforms.uEnergy.value) * (1 - Math.exp(-6.5 * delta))
+      uniforms.uState.value += (stateTarget - uniforms.uState.value) * (1 - Math.exp(-5.2 * delta))
+      uniforms.uProgress.value += (progressTarget - uniforms.uProgress.value) * (1 - Math.exp(-9 * delta))
+    }
+
+    points.rotation.z = globalRotation
+    points.rotation.x = (uniforms.uEnergy.value - 0.5) * 0.06 * (1 - ribbonMorph)
     renderer.render(scene, camera)
   }
 
@@ -281,10 +430,20 @@ export function createSculpture(container) {
   return {
     setState(state) {
       const states = { idle: 0, recording: 1, mode: 2, sculpt: 3, result: 4 }
-      stateTarget = states[state] ?? 0
+      currentState = states[state] == null ? 'idle' : state
+      stateTarget = states[currentState] ?? 0
+
+      // 离开选择模式后，预览旋转平滑停止。
+      if (currentState !== 'mode') previewRotationTarget = 0
+      // 离开雕刻模式后，不继续消费残留转腕速度。
+      if (currentState !== 'sculpt') {
+        twistTarget = 0
+        twistPersistent = false
+      }
     },
 
     setAudioLevel(level) {
+      if (frozen) return
       audioTarget = clamp01(Number(level) || 0)
     },
 
@@ -292,22 +451,70 @@ export function createSculpture(container) {
       modeTarget = clamp01(Number(value) || 0)
     },
 
+    // -1 = 向左旋转，0 = 停止，1 = 向右旋转。
+    // 只在 mode 状态生效，因此不会把万花筒展开成条带。
+    setPreviewRotation,
+
+    setTwist,
+
+    setEnergy,
+
+    // 鼠标左右拖动模拟转腕；纵向移动只保留原来的声音能量映射。
     setInteraction(x, y) {
-      xTarget = THREE.MathUtils.clamp(Number(x) || 0, -1, 1)
-      yTarget = THREE.MathUtils.clamp(Number(y) || 0, -1, 1)
-      energyTarget = clamp01((1 - yTarget) * 0.5)
+      if (currentState !== 'sculpt') return
+      setTwist(x, true)
+      setEnergy((1 - clampSigned(Number(y) || 0)) * 0.5)
     },
 
     setProgress(value) {
+      if (frozen) return
       progressTarget = clamp01(Number(value) || 0)
     },
 
-    burst(strength = 1) {
-      burstTarget = Math.max(burstTarget, clamp01(Number(strength) || 1))
+    // 第一阶段只开发转腕；保留空接口，避免旧代码调用时报错。
+    burst() {},
+
+    freeze(value = true) {
+      const next = Boolean(value)
+      if (next === frozen) return
+      frozen = next
+      if (!frozen) {
+        previewRotationTarget = 0
+        previewRotationSmoothed = 0
+        twistTarget = 0
+        twistSmoothed = 0
+        twistPersistent = false
+        uniforms.uTwist.value = 0
+        lastTwistInputAt = performance.now()
+        clock.getDelta()
+      }
     },
 
-    freeze(value) {
-      frozen = Boolean(value)
+    reset() {
+      frozen = false
+      currentState = 'idle'
+      visualTime = 0
+      globalRotation = 0
+      previewRotationTarget = 0
+      previewRotationSmoothed = 0
+      ribbonTwistMemory = 0
+      ribbonMorph = 0
+      ribbonTarget = 0
+      audioTarget = 0
+      energyTarget = 0.5
+      progressTarget = 0
+      twistTarget = 0
+      twistSmoothed = 0
+      twistPersistent = false
+      lastTwistInputAt = performance.now()
+      uniforms.uTime.value = 0
+      uniforms.uAudio.value = 0
+      uniforms.uTwist.value = 0
+      uniforms.uRibbonTwist.value = 0
+      uniforms.uRibbonMorph.value = 0
+      uniforms.uEnergy.value = 0.5
+      uniforms.uProgress.value = 0
+      points.rotation.set(0, 0, 0)
     },
 
     async captureBlob() {

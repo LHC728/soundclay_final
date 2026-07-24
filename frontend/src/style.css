@@ -118,15 +118,19 @@ input:focus-visible {
   touch-action: none;
 }
 
+/*
+ * Three.js 画布改为真正的全屏画布。
+ * 初始万花筒仍在中心；第一次转腕后，条带可使用整个屏幕宽度。
+ */
 .visual {
   position: absolute;
   z-index: 1;
-  left: 50%;
-  top: 47%;
-  width: min(78vmin, 760px);
-  height: min(78vmin, 760px);
-  transform: translate(-50%, -50%);
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
   pointer-events: none;
+  overflow: hidden;
 }
 
 .visual canvas {
@@ -138,15 +142,15 @@ input:focus-visible {
   pointer-events: none !important;
 }
 
+/* 鼠标测试区域与画布一致，左右拖动即可模拟转腕。 */
 .interaction-layer {
   position: absolute;
   z-index: 10;
-  left: 50%;
-  top: 47%;
-  width: min(82vmin, 800px);
-  height: min(82vmin, 800px);
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  border-radius: 0;
   touch-action: none;
   cursor: grab;
 }
@@ -308,9 +312,9 @@ input:focus-visible {
   border-radius: 999px;
   background: linear-gradient(
     90deg,
-    rgba(255, 91, 72, 0.9),
+    rgba(155, 220, 255, 0.9),
     rgba(255, 255, 255, 0.35) 50%,
-    rgba(155, 220, 255, 0.9)
+    rgba(255, 91, 72, 0.9)
   );
 }
 
@@ -332,9 +336,9 @@ input:focus-visible {
   border-radius: 999px;
   background: linear-gradient(
     90deg,
-    rgba(255, 91, 72, 0.9),
+    rgba(155, 220, 255, 0.9),
     rgba(255, 255, 255, 0.35) 50%,
-    rgba(155, 220, 255, 0.9)
+    rgba(255, 91, 72, 0.9)
   );
 }
 
@@ -500,16 +504,12 @@ input:focus-visible {
 }
 
 @media (max-width: 680px) {
-  .visual {
-    top: 45%;
-    width: min(92vw, 72vh);
-    height: min(92vw, 72vh);
-  }
-
+  .visual,
   .interaction-layer {
-    top: 45%;
-    width: min(96vw, 76vh);
-    height: min(96vw, 76vh);
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
   }
 
   .copy {
