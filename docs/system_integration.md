@@ -53,6 +53,11 @@ Backend variables:
 | `ABLETON_OSC_ENABLED` | `false` | Enables the optional local OSC/UDP bridge |
 | `ABLETON_OSC_HOST` | `127.0.0.1` | Ableton/Max for Live OSC receiver host |
 | `ABLETON_OSC_PORT` | `11000` | Ableton/Max for Live UDP receive port |
+| `ABLETON_MIDI_ENABLED` | `false` | Enables the existing SoundClay MIDI mapping saved in the Ableton Set |
+| `ABLETON_MIDI_PORT` | `SoundClay MIDI` | Case-insensitive loopMIDI output name or substring |
+| `ABLETON_MIDI_CHANNEL` | `0` | Zero-based Mido channel; `0` is Ableton MIDI channel 1 |
+| `ABLETON_MIDI_GAIN_FLOOR` | `0.4` | Lowest Main gain fraction while ring energy is zero |
+| `ABLETON_MIDI_MAX_HZ` | `50` | Maximum CC update rate per controller |
 | `SOUNDCLAY_RING_ENABLED` | `false` | Enables the single hardware `RingRuntime`; keep false for offline/mock testing |
 | `SOUNDCLAY_RING_PATH` | blank | Absolute local checkout containing AB's `ring_runtime.py` |
 | `SOUNDCLAY_RING_ADDRESS` | `FA:7E:92:E6:38:6D` | AB's default Zilo ring BLE address; override for another device |
@@ -218,7 +223,34 @@ The completed page displays only the work title and play/share/continue-editing 
 
 ## Ableton Live bridge
 
-`backend/ableton_adapter.py` implements dependency-free OSC over UDP. It is disabled by default, so Ableton being closed can never break the browser flow. To enable it, put the following only in `backend/.env` and restart FastAPI:
+`backend/ableton_adapter.py` preserves the optional dependency-free OSC/UDP bridge and also drives the MIDI mappings already saved in `C:\Users\19662\Desktop\SoundClay_Final.als\soundclay.als`. Both transports are disabled by default, so Ableton being closed can never break the browser flow.
+
+For the existing Ableton Set, start loopMIDI with the `SoundClay MIDI` port, open the Set, and enable **Remote** for its input in Live's Link, Tempo & MIDI settings. Then put this in `backend/.env` and restart FastAPI:
+
+```dotenv
+ABLETON_MIDI_ENABLED=true
+ABLETON_MIDI_PORT=SoundClay MIDI
+ABLETON_MIDI_CHANNEL=0
+ABLETON_MIDI_GAIN_FLOOR=0.4
+ABLETON_MIDI_MAX_HZ=50
+```
+
+The checked Ableton Set contains these mappings; the backend reuses them exactly:
+
+| Ring/product event | MIDI message (channel 1) | Existing Ableton target |
+| --- | --- | --- |
+| signed `twist` mapped to `0..127` | CC 20 | `Timbre Wheel` Chain Selector |
+| `accelMag`, with a safe 40% floor | CC 21 | Main Gain |
+| Joy Express / Soothe | Note 60 / 61 | Scene launch |
+| Anger Express / Soothe | Note 62 / 63 | Scene launch |
+| Sadness Express / Soothe | Note 64 / 65 | Scene launch |
+| Anxiety Express / Soothe | Note 66 / 67 | Scene launch |
+| Mixed Express / Soothe | Note 68 / 69 | Scene launch |
+| `burst` with strength as velocity | Note 70 | `10_Drum_Layer` clip |
+
+`freeze` and `color` have no saved MIDI assignment in this Set, so they continue through OSC only. This avoids silently inventing a second mapping.
+
+To enable the optional OSC path as well, use:
 
 ```dotenv
 ABLETON_OSC_ENABLED=true
@@ -249,7 +281,7 @@ The bridge sends:
 | `/soundclay/freeze` | integer `0/1` | Freeze/hold device |
 | `/soundclay/color` | normalized hue `0..1` | Timbre, send, or spectral macro |
 
-`GET /api/ableton/status` exposes the active host, port, transport, and address map. `POST /api/mock/color?hue=210` and WebSocket `ui/color` are additive test controls. Existing twist/burst/freeze mock and ring events automatically forward to OSC when enabled.
+`GET /api/ableton/status` exposes the OSC addresses plus resolved MIDI port, channel, saved CC/Note map, connection state, available outputs, and last error. Mode selection launches the matching emotion/mode scene; real ring IMU drives CC20/CC21; burst triggers Note 70. Existing twist/burst/freeze mock and ring events continue to forward to OSC when enabled.
 
 ## Legacy single-screen workflow
 

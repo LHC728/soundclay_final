@@ -17,8 +17,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from audio_pipeline import analyze_audio
+from ableton_adapter import close_midi_output as close_ableton_midi
 from ableton_adapter import send_control as send_ableton_control
 from ableton_adapter import send_motion as send_ableton_motion
+from ableton_adapter import send_scene as send_ableton_scene
 from ableton_adapter import status as ableton_status
 from emotion_adapter import analyze_emotion
 from event_bus import EventBus
@@ -70,6 +72,7 @@ async def lifespan(_: FastAPI):
             with suppress(asyncio.CancelledError):
                 await task
         await manager.close()
+        close_ableton_midi()
         ring_manager = None
 
 
@@ -670,6 +673,7 @@ async def select_mode(body: ModeSelectRequest) -> dict:
     )
     session.recipe = build_recipe(session.emotion, body.mode)
     send_ableton_control("mode", body.mode.value)
+    send_ableton_scene(session.emotion.value, body.mode.value)
     if ORIGINAL_AUDIO.exists():
         session.original_audio_url = "/audio/original.wav"
         session.output_audio_url = "/audio/original.wav"
@@ -929,7 +933,10 @@ async def _ingest_ring_event(raw: dict, *, source: str) -> dict:
             del trace[:-500]
         _touch_session()
         # Ableton's established route remains 0..1; only this adapter converts.
-        send_ableton_motion("twist", {"value": (twist + 1.0) / 2.0})
+        send_ableton_motion(
+            "twist",
+            {"value": (twist + 1.0) / 2.0, "energy": payload["accelMag"]},
+        )
         message = event("imu", {**payload, "source": source}, timestamp=timestamp)
     else:
         message = _motion_event(event_type, payload, timestamp)

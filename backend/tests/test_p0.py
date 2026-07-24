@@ -52,6 +52,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(server, "OUTPUT_AUDIO", audio_dir / "output.wav")
     monkeypatch.setenv("EMOTION_PROVIDER", "local")
     monkeypatch.setenv("ABLETON_OSC_ENABLED", "false")
+    monkeypatch.setenv("ABLETON_MIDI_ENABLED", "false")
     emotion_adapter._reset_runtime_state()
     server.session = SessionState(session_id="test-session")
     server.bus = EventBus()
@@ -605,6 +606,7 @@ def test_color_motion_is_broadcast_traced_and_ready_for_ableton(client, monkeypa
 
 def test_ableton_osc_adapter_is_disabled_by_default(monkeypatch) -> None:
     monkeypatch.setenv("ABLETON_OSC_ENABLED", "false")
+    monkeypatch.setenv("ABLETON_MIDI_ENABLED", "false")
     monkeypatch.setattr(
         ableton_adapter.socket,
         "socket",
@@ -631,6 +633,7 @@ def test_ableton_osc_adapter_encodes_local_udp_controls(monkeypatch) -> None:
             packets.append((packet, target))
 
     monkeypatch.setenv("ABLETON_OSC_ENABLED", "true")
+    monkeypatch.setenv("ABLETON_MIDI_ENABLED", "false")
     monkeypatch.setenv("ABLETON_OSC_HOST", "127.0.0.1")
     monkeypatch.setenv("ABLETON_OSC_PORT", "11000")
     monkeypatch.setattr(ableton_adapter.socket, "socket", lambda *_a, **_k: FakeSocket())
@@ -648,6 +651,75 @@ def test_status_exposes_backward_compatible_ableton_mapping(client) -> None:
     assert status.status_code == 200
     assert status.json()["transport"] == "osc-udp"
     assert status.json()["addresses"]["color"] == "/soundclay/color"
+    assert status.json()["midi"]["controls"]["timbreWheel"]["number"] == 20
+    assert status.json()["midi"]["controls"]["mainGain"]["number"] == 21
+    assert status.json()["midi"]["controls"]["burstClip"]["number"] == 70
+    assert status.json()["midi"]["scenes"]["joy:express"] == 60
+    assert status.json()["midi"]["scenes"]["neutral_mixed:soothe"] == 69
+
+
+def test_ableton_midi_reuses_saved_live_set_mapping(monkeypatch) -> None:
+    messages = []
+
+    class FakePort:
+        closed = False
+
+        def send(self, message):
+            messages.append(message)
+
+        def close(self):
+            self.closed = True
+
+    port = FakePort()
+    monkeypatch.setenv("ABLETON_OSC_ENABLED", "false")
+    monkeypatch.setenv("ABLETON_MIDI_ENABLED", "true")
+    monkeypatch.setenv("ABLETON_MIDI_PORT", "SoundClay MIDI")
+    monkeypatch.setenv("ABLETON_MIDI_CHANNEL", "0")
+    monkeypatch.setenv("ABLETON_MIDI_GAIN_FLOOR", "0.4")
+    monkeypatch.setattr(
+        ableton_adapter.mido,
+        "get_output_names",
+        lambda: ["GesturePort 1", "SoundClay MIDI 2"],
+    )
+    monkeypatch.setattr(ableton_adapter.mido, "open_output", lambda name: port)
+    ableton_adapter.close_midi_output()
+
+    assert ableton_adapter.send_scene("joy", "express") is True
+    ableton_adapter.send_motion("twist", {"value": 0.5, "energy": 0.25})
+    ableton_adapter.send_motion("burst", {"strength": 0.8})
+
+    assert [(message.type, getattr(message, "note", None)) for message in messages[:2]] == [
+        ("note_on", 60),
+        ("note_off", 60),
+    ]
+    cc_messages = [message for message in messages if message.type == "control_change"]
+    assert [(message.control, message.value) for message in cc_messages] == [(20, 64), (21, 70)]
+    assert [(message.type, getattr(message, "note", None)) for message in messages[-2:]] == [
+        ("note_on", 70),
+        ("note_off", 70),
+    ]
+    assert all(message.channel == 0 for message in messages)
+    ableton_adapter.close_midi_output()
+
+
+def test_mode_selection_sends_existing_emotion_scene_note(client, monkeypatch) -> None:
+    test_client, _, _ = client
+    sent = []
+    monkeypatch.setattr(
+        server,
+        "send_ableton_scene",
+        lambda emotion, mode: sent.append((emotion, mode)) or True,
+    )
+    assert test_client.post(
+        "/api/mock/transcript", json={"transcript": "我真的很生气"}
+    ).status_code == 200
+    assert test_client.post(
+        "/api/emotion/confirm", json={"emotion": "anger"}
+    ).status_code == 200
+    assert test_client.post(
+        "/api/mode/select", json={"mode": "soothe"}
+    ).status_code == 200
+    assert sent == [("anger", "soothe")]
 
 
 def test_recipe_preview_does_not_advance_the_mode_choice(client) -> None:
