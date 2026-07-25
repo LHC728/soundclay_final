@@ -59,7 +59,7 @@ Backend variables:
 | `ABLETON_MIDI_GAIN_FLOOR` | `0.4` | Lowest Main gain fraction while ring energy is zero |
 | `ABLETON_MIDI_MAX_HZ` | `50` | Maximum CC update rate per controller |
 | `SOUNDCLAY_RING_ENABLED` | `false` | Enables the single hardware `RingRuntime`; keep false for offline/mock testing |
-| `SOUNDCLAY_RING_PATH` | blank | Absolute local checkout containing AB's `ring_runtime.py` |
+| `SOUNDCLAY_RING_PATH` | blank | Optional override directory; blank uses the RingRuntime bundled in `backend/` |
 | `SOUNDCLAY_RING_ADDRESS` | `FA:7E:92:E6:38:6D` | AB's default Zilo ring BLE address; override for another device |
 | `SOUNDCLAY_SESSION_ROOT` | `./runtime/sessions` | RingRuntime audio/event output, ignored by Git |
 | `SOUNDCLAY_FFMPEG` | `ffmpeg` | FFmpeg executable name or absolute path used by AB audio decoding |
@@ -80,7 +80,7 @@ VITE_SOOTHE_AUDIO_URL=/audio/modes/soothe.wav
 
 Canonical emotion values are `joy`, `anger`, `sadness`, `anxiety`, and `neutral_mixed`. The legacy request spelling `neutral-mixed` remains accepted and is serialized as `neutral_mixed`. This is an expressed-emotion classification of the user's words, not a diagnosis or claim about a hidden internal state.
 
-Modes are `express` and `soothe`. Stable ring motion types remain `twist`, `burst`, and `freeze`; the new default UI adds the backward-compatible `color` interaction.
+Modes are `express` and `soothe`. Stable ring controls are signed `twist`, signed `tiltX`, discrete `burst`, and idempotent `freeze`; legacy `finger` remains an input alias for `tiltX`, and the default UI also keeps the backward-compatible `color` interaction.
 
 The eight taskbook phases remain available to legacy clients: `ready`, `recording`, `understanding`, `emotion_review`, `mode_choice`, `materializing`, `sculpting`, and `saved`. `audio_ready` is an explicit recoverable handoff between Recording and Understanding. The current product page skips this chain and starts with direct direction selection; `emotion_review` remains only for backward compatibility.
 
@@ -101,6 +101,7 @@ The eight taskbook phases remain available to legacy clients: `ready`, `recordin
 | `POST` | `/api/recipe/preview` | Builds an Express/Soothe preview without advancing or mutating the session |
 | `POST` | `/api/mode/select` | Selects Express/Soothe and generates a validated recipe |
 | `POST` | `/api/mock/twist?value=0.65` | Clamps, traces, broadcasts, and returns twist |
+| `POST` | `/api/mock/tilt-x?value=0.65` | Simulates signed ring tilt and drives the existing three-level size/gain mapping |
 | `POST` | `/api/mock/burst?strength=0.9` | Clamps, traces, broadcasts, and returns burst |
 | `POST` | `/api/mock/freeze?active=true` | Freezes or releases, traces, broadcasts, and returns freeze; omitting `active` preserves the original freeze behavior |
 | `POST` | `/api/mock/color?hue=210` | Normalizes hue, traces/broadcasts the random color change, and forwards it to OSC |
@@ -138,13 +139,13 @@ All WebSocket events use this additive, backward-compatible envelope:
 }
 ```
 
-Supported event types are `status`, `recording`, `audio_ready`, `transcript_ready`, `audio_features_ready`, `emotion_ready`, `material_ready`, `twist`, `burst`, `freeze`, `color`, `saved`, and `error`. Inbound `imu/twist`, `imu/burst`, and `imu/freeze` are accepted as Member B aliases; `ui/color` is accepted for color clients. Inbound JSON, identifiers, timestamps, and numbers are validated; normalized events are stored in a bounded 500-item trace and rebroadcast. No decoding or model inference occurs in the motion loop.
+Supported event types are `status`, `recording`, `audio_ready`, `transcript_ready`, `audio_features_ready`, `emotion_ready`, `material_ready`, `twist`, `tiltX`, `burst`, `freeze`, `color`, `saved`, and `error`. Inbound `imu/twist`, `imu/tiltX`, `imu/burst`, and `imu/freeze` are accepted as Member B aliases; legacy `finger` remains accepted as a size-control alias and `ui/color` remains accepted for color clients. Inbound JSON, identifiers, timestamps, and numbers are validated; normalized events are stored in a bounded 500-item trace and rebroadcast. No decoding or model inference occurs in the motion loop.
 
 ## AB RingRuntime integration
 
 FastAPI owns exactly one optional `RingRuntime` for the process lifetime. Startup calls `connect()` and `get_status()`. A ring session calls `arm_recording(session_id)`, `enter_motion_mode(session_id)`, then `sculpt_until_freeze(session_id)` in sequence. Shutdown cancels an unfinished session before calling `runtime.close()`.
 
-The adapter accepts AB's `status`, `audio_ready`, `imu`, `burst`, `freeze`, and `error` events. Both `sessionId` and legacy `session_id` are accepted at ingress, then normalized to AB's 1-80 character identifier contract. Real status fields including `ringConnected`, `firmwareVersion`, `batteryPercent`, sensor ranges, reconnect attempts, and phase messages are preserved. Motion is isolated to the active AB session. `imu.twist` remains signed in `[-1, 1]`; only the optional Ableton adapter maps it to `[0, 1]`. Repeated or out-of-order IMU sequences, repeated bursts, and repeated freezes are idempotently ignored.
+The adapter accepts AB's `status`, `audio_ready`, `imu`, `burst`, `freeze`, and `error` events. Both `sessionId` and legacy `session_id` are accepted at ingress, then normalized to AB's 1-80 character identifier contract. Real status fields including `ringConnected`, `firmwareVersion`, `batteryPercent`, sensor ranges, reconnect attempts, and phase messages are preserved. Motion is isolated to the active AB session. `imu.twist` and `imu.tiltX` remain signed in `[-1, 1]`; only the Ableton adapter converts them to the existing timbre and three-level gain mappings. Repeated or out-of-order IMU sequences, repeated bursts, and repeated freezes are idempotently ignored.
 
 `audio_ready.wavPath` must be an absolute existing local WAV path below the 50 MiB limit. The backend reads and validates it without moving or deleting AB's source file, atomically stores its own current WAV, computes real features, and launches local STT/emotion work outside the live motion loop. On Windows, the manager also resolves `%LOCALAPPDATA%\Programs\ffmpeg\bin\ffmpeg.exe` when the current process has not yet inherited an updated user `PATH`.
 
@@ -160,10 +161,9 @@ Only after mock acceptance should hardware mode be enabled in `backend/.env`:
 
 ```dotenv
 SOUNDCLAY_RING_ENABLED=true
-SOUNDCLAY_RING_PATH=C:\Users\19662\Desktop\soundclay-ring\soundclay-ring-main
 ```
 
-Before real-ring acceptance, close the phone Zilo APK and any other BLE program, then start exactly one FastAPI/Python process. The local AB checkout and its hardware dependencies remain external to this repository.
+Before real-ring acceptance, close the phone Zilo APK, phone Bluetooth, and any other BLE program, then start exactly one FastAPI/Python process. The A/B runtime is bundled in this repository; only the physical ring and Windows BLE stack remain external hardware dependencies.
 
 ## Audio analysis and recipe contracts
 

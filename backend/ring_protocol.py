@@ -7,8 +7,17 @@ from collections import deque
 from typing import Any
 
 
-RING_EVENT_TYPES = {"status", "audio_ready", "imu", "finger", "burst", "freeze", "error"}
-MOTION_EVENT_TYPES = {"imu", "finger", "burst", "freeze"}
+RING_EVENT_TYPES = {
+    "status",
+    "audio_ready",
+    "imu",
+    "tiltX",
+    "finger",
+    "burst",
+    "freeze",
+    "error",
+}
+MOTION_EVENT_TYPES = {"imu", "tiltX", "finger", "burst", "freeze"}
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
 
@@ -182,11 +191,30 @@ def normalize_ring_event(raw: Any) -> dict[str, Any]:
         normalized_payload["twist"] = _finite_number(
             payload.get("twist", 0), "twist", minimum=-1, maximum=1
         )
+        normalized_payload["tiltX"] = _finite_number(
+            payload.get("tiltX", 0), "tiltX", minimum=-1, maximum=1
+        )
         normalized_payload["accelMag"] = _finite_number(
             payload.get("accelMag", 0), "accelMag", minimum=0, maximum=1
         )
-        for key in ("accelX", "accelY", "accelZ", "gyroX", "gyroY", "gyroZ", "gyroXY"):
+        for key in (
+            "accelX",
+            "accelY",
+            "accelZ",
+            "gyroX",
+            "gyroY",
+            "gyroZ",
+            "gyroXY",
+            "linearAccelX",
+            "linearAccelY",
+            "linearAccelZ",
+        ):
             normalized_payload[key] = _finite_number(payload.get(key, 0), key)
+        burst_state = _bounded_text(payload.get("burstState"), "burstState", 64)
+        if burst_state is not None:
+            normalized_payload["burstState"] = burst_state
+        if "burstArmed" in payload:
+            normalized_payload["burstArmed"] = _boolean(payload["burstArmed"], "burstArmed")
         if "sequence" in payload:
             normalized_payload["sequence"] = _integer(payload["sequence"], "sequence", minimum=0)
         if "deviceTimestampMs" in payload:
@@ -206,7 +234,7 @@ def normalize_ring_event(raw: Any) -> dict[str, Any]:
             normalized_payload["deviceTimestampMs"] = _integer(
                 payload["deviceTimestampMs"], "deviceTimestampMs", minimum=0
             )
-    elif event_type == "finger":
+    elif event_type in {"tiltX", "finger"}:
         normalized_payload["value"] = _finite_number(
             payload.get("value", payload.get("x", 0)),
             "value",
@@ -272,7 +300,7 @@ class RingEventGuard:
         if event_type not in MOTION_EVENT_TYPES or not session_id:
             return True
 
-        if event_type in {"imu", "finger"} and "sequence" in payload:
+        if event_type in {"imu", "tiltX", "finger"} and "sequence" in payload:
             sequence = payload["sequence"]
             sequence_key = (session_id, event_type)
             previous = self.last_motion_sequence.get(sequence_key)

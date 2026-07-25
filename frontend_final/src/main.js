@@ -217,7 +217,7 @@ function handleSocketEvent(message) {
 
       audio.setMorph({ space: (twist + 1) / 2, energy })
 
-      const fingerValue = payload.fingerX ?? payload.finger ?? payload.size ?? payload.scale
+      const fingerValue = payload.tiltX ?? payload.fingerX ?? payload.finger ?? payload.size ?? payload.scale
       if (Number.isFinite(Number(fingerValue))) applySizeControl(Number(fingerValue))
       break
     }
@@ -229,6 +229,7 @@ function handleSocketEvent(message) {
       audio.setMorph({ space: (twist + 1) / 2 })
       break
     }
+    case 'tiltX':
     case 'finger':
     case 'finger_move':
     case 'size':
@@ -1182,6 +1183,7 @@ window.addEventListener('soundclay:gesture', (event) => {
     case 'pull':
       triggerPull(strength)
       break
+    case 'tiltX':
     case 'finger':
     case 'finger_move':
     case 'size':

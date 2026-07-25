@@ -585,6 +585,12 @@ def test_mock_motion_routes_clamp_broadcast_and_update_session(client) -> None:
         assert finger["payload"]["gain"] == 0.0
         assert websocket.receive_json() == finger
 
+        tilt = test_client.post("/api/mock/tilt-x?value=0.8").json()
+        assert tilt["type"] == "tiltX"
+        assert tilt["payload"]["value"] == 0.8
+        assert tilt["payload"]["gain"] == 0.9
+        assert websocket.receive_json() == tilt
+
         burst = test_client.post("/api/mock/burst?strength=-2").json()
         assert burst["payload"]["strength"] == 0.0
         assert websocket.receive_json() == burst
@@ -597,6 +603,7 @@ def test_mock_motion_routes_clamp_broadcast_and_update_session(client) -> None:
     assert [item["type"] for item in server.session.motion["trace"]] == [
         "twist",
         "finger",
+        "tiltX",
         "burst",
         "freeze",
     ]
@@ -781,16 +788,19 @@ def test_frontend_ableton_motion_route_maps_signed_controls(client, monkeypatch)
     monkeypatch.setattr(server, "send_ableton_motion", lambda kind, payload: sent.append((kind, payload)))
 
     twist = test_client.post("/api/ableton/motion/twist?value=-1").json()
+    tilt = test_client.post("/api/ableton/motion/tiltX?value=-0.6").json()
     finger = test_client.post("/api/ableton/motion/finger?value=0.6").json()
     burst = test_client.post("/api/ableton/motion/burst?value=2").json()
     unsupported = test_client.post("/api/ableton/motion/unknown?value=0")
 
     assert twist == {"ok": True, "type": "twist", "value": 0.0}
+    assert tilt == {"ok": True, "type": "tiltX", "value": -0.6}
     assert finger == {"ok": True, "type": "finger", "value": 0.6}
     assert burst == {"ok": True, "type": "burst", "value": 1.0}
     assert unsupported.status_code == 422
     assert sent == [
         ("twist", {"value": 0.0}),
+        ("finger", {"value": -0.6}),
         ("finger", {"value": 0.6}),
         ("burst", {"strength": 1.0}),
     ]

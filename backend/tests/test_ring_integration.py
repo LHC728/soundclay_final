@@ -70,14 +70,22 @@ def test_protocol_preserves_signed_twist_and_accepts_session_alias() -> None:
                 "session_id": "SC-001",
                 "sequence": 9,
                 "twist": -0.72,
+                "tiltX": 0.63,
                 "accelMag": 0.18,
                 "gyroZ": -92.4,
+                "linearAccelX": 0.21,
+                "burstState": "armed",
+                "burstArmed": True,
             },
         }
     )
     assert message["payload"]["sessionId"] == "SC-001"
     assert message["payload"]["twist"] == pytest.approx(-0.72)
+    assert message["payload"]["tiltX"] == pytest.approx(0.63)
     assert message["payload"]["gyroZ"] == pytest.approx(-92.4)
+    assert message["payload"]["linearAccelX"] == pytest.approx(0.21)
+    assert message["payload"]["burstState"] == "armed"
+    assert message["payload"]["burstArmed"] is True
 
 
 def test_protocol_accepts_real_ab_status_and_preserves_diagnostics() -> None:
@@ -142,6 +150,23 @@ def test_protocol_accepts_signed_finger_motion_and_session_alias() -> None:
         "value": -1.0,
         "sequence": 10,
     }
+
+    tilt = normalize_ring_event(
+        {
+            "type": "tiltX",
+            "timestamp": 3,
+            "payload": {"sessionId": "SC-001", "sequence": 11, "value": 1.8},
+        }
+    )
+    assert tilt["payload"]["value"] == 1.0
+
+
+def test_runtime_manager_can_load_bundled_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SOUNDCLAY_RING_PATH", raising=False)
+    manager = RingRuntimeManager(lambda event: asyncio.sleep(0), enabled=False)
+    factory = manager._load_runtime_factory()
+    assert factory.__name__ == "RingRuntime"
+    assert factory.__module__ == "ring_runtime"
 
 
 def test_event_guard_deduplicates_sequences_bursts_and_freezes() -> None:
@@ -233,8 +258,16 @@ def test_ffmpeg_resolution_handles_stale_windows_path(
     assert resolve_ring_ffmpeg_path() == str(ffmpeg.resolve())
 
 
-def test_mock_ring_motion_is_session_scoped_signed_and_idempotent(ring_client) -> None:
+def test_mock_ring_motion_is_session_scoped_signed_and_idempotent(
+    ring_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
     test_client, _ = ring_client
+    ableton_events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        server,
+        "send_ableton_motion",
+        lambda kind, payload: ableton_events.append((kind, payload)),
+    )
     status = {
         "type": "status",
         "timestamp": 1000,
@@ -249,6 +282,7 @@ def test_mock_ring_motion_is_session_scoped_signed_and_idempotent(ring_client) -
             "sessionId": "SC-001",
             "sequence": 1,
             "twist": -0.8,
+            "tiltX": 0.76,
             "accelMag": 0.3,
             "gyroZ": -40,
         },
@@ -261,6 +295,12 @@ def test_mock_ring_motion_is_session_scoped_signed_and_idempotent(ring_client) -
         "event": normalize_ring_event(imu),
     }
     assert server.session.motion["twist"] == pytest.approx(-0.8)
+    assert server.session.motion["tiltX"] == pytest.approx(0.76)
+    assert server.session.motion["size"] == pytest.approx(0.76)
+    assert ableton_events[:2] == [
+        ("twist", {"value": pytest.approx(0.1)}),
+        ("finger", {"value": pytest.approx(0.76)}),
+    ]
 
     freeze = {
         "type": "freeze",

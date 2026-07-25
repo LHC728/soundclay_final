@@ -25,6 +25,7 @@ backend/audio/*.ogg
 works/
 public_works/
 backend/runtime/
+runtime/
 
 # Logs and system files
 *.log
