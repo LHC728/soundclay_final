@@ -215,7 +215,7 @@ OBS 不是核心流程的硬依赖。未启动 OBS 时，录音、动作雕刻�
 .\.venv311\Scripts\python.exe backend\configure_obs.py
 ```
 
-重复运行此命令是安全的，不会重复创建源。默认绑定 `Ableton Live 12 Suite.exe`；使用其他版本时可在 `backend/.env` 设置 `OBS_ABLETON_EXECUTABLE`。
+重复运行此命令是安全的，不会重复创建源。脚本会自动读取当前 Ableton 主窗口的标题和窗口类，避免应用音频源错误绑定到 Chrome。默认绑定 `Ableton Live 12 Suite.exe`；使用其他版本时可在 `backend/.env` 设置 `OBS_ABLETON_EXECUTABLE`。只有自动识别失败时才需要填写完整的 `OBS_ABLETON_WINDOW_SELECTOR`。
 
 选择模式进入雕刻页后，前端调用 `POST /api/obs/recording/start`；点击凝固时调用 `POST /api/obs/recording/stop`。OBS 返回的 MP4 副本会写入：
 

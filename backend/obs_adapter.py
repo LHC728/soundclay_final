@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import os
 import uuid
@@ -13,6 +14,46 @@ import websockets
 
 class OBSControlError(RuntimeError):
     """OBS is unavailable or rejected a local recording request."""
+
+
+def _ableton_window_selector(executable: str) -> str:
+    """Return the complete OBS selector for the active Ableton main window."""
+
+    override = os.getenv("OBS_ABLETON_WINDOW_SELECTOR", "").strip()
+    if override:
+        return override
+    if os.name != "nt":
+        return f"::{executable}"
+
+    candidates: list[tuple[str, str]] = []
+    user32 = ctypes.windll.user32
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def collect_window(hwnd: int, _lparam: int) -> bool:
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        title_length = user32.GetWindowTextLengthW(hwnd)
+        if title_length <= 0:
+            return True
+        title_buffer = ctypes.create_unicode_buffer(title_length + 1)
+        class_buffer = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, title_buffer, len(title_buffer))
+        user32.GetClassNameW(hwnd, class_buffer, len(class_buffer))
+        title = title_buffer.value.strip()
+        class_name = class_buffer.value.strip()
+        if title and class_name == "Ableton Live Window Class":
+            candidates.append((title, class_name))
+        return True
+
+    try:
+        user32.EnumWindows(callback_type(collect_window), 0)
+    except (AttributeError, OSError):
+        return f"::{executable}"
+    if not candidates:
+        return f"::{executable}"
+
+    title, class_name = candidates[0]
+    return f"{title}:{class_name}:{executable}"
 
 
 async def _request(request_type: str, request_data: dict | None = None) -> dict:
@@ -147,10 +188,12 @@ async def ensure_soundclay_sources() -> dict:
         os.getenv("OBS_ABLETON_EXECUTABLE", "Ableton Live 12 Suite.exe").strip()
         or "Ableton Live 12 Suite.exe"
     )
+    ableton_selector = _ableton_window_selector(ableton_executable)
     ableton_settings = {
-        # OBS window selectors use title:class:executable. Matching priority 2
-        # selects by executable, which remains stable when Live Set titles vary.
-        "window": f"::{ableton_executable}",
+        # OBS silently keeps the previous application when it receives an
+        # incomplete selector. Resolve the live title and window class so the
+        # application-audio source cannot remain attached to Chrome.
+        "window": ableton_selector,
         "priority": 2,
     }
     if ableton_name in existing:
@@ -183,5 +226,6 @@ async def ensure_soundclay_sources() -> dict:
         "videoSource": video_name,
         "audioSource": ableton_name,
         "audioExecutable": ableton_executable,
+        "audioWindowSelector": ableton_selector,
         "mutedInputs": muted,
     }

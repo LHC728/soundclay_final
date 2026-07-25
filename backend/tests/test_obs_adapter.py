@@ -17,6 +17,11 @@ def test_ensure_soundclay_sources_creates_missing_capture_inputs(monkeypatch) ->
         return {}
 
     monkeypatch.setattr(obs_adapter, "_request", fake_request)
+    monkeypatch.setattr(
+        obs_adapter,
+        "_ableton_window_selector",
+        lambda _executable: "soundclay - Ableton Live:Ableton Live Window Class:Ableton Live 12 Suite.exe",
+    )
     result = asyncio.run(obs_adapter.ensure_soundclay_sources())
 
     assert result["created"] == ["SoundClay 屏幕", "SoundClay Ableton 音频"]
@@ -26,7 +31,9 @@ def test_ensure_soundclay_sources_creates_missing_capture_inputs(monkeypatch) ->
         "monitor_capture",
         "wasapi_process_output_capture",
     ]
-    assert create_calls[1]["inputSettings"]["window"] == "::Ableton Live 12 Suite.exe"
+    assert create_calls[1]["inputSettings"]["window"] == (
+        "soundclay - Ableton Live:Ableton Live Window Class:Ableton Live 12 Suite.exe"
+    )
 
 
 def test_ensure_soundclay_sources_reuses_desktop_audio_and_mutes_microphone(
@@ -59,6 +66,11 @@ def test_ensure_soundclay_sources_reuses_desktop_audio_and_mutes_microphone(
         return {}
 
     monkeypatch.setattr(obs_adapter, "_request", fake_request)
+    monkeypatch.setattr(
+        obs_adapter,
+        "_ableton_window_selector",
+        lambda _executable: "soundclay - Ableton Live:Ableton Live Window Class:Ableton Live 12 Suite.exe",
+    )
     result = asyncio.run(obs_adapter.ensure_soundclay_sources())
 
     assert result["created"] == ["SoundClay Ableton 音频"]
@@ -79,3 +91,10 @@ def test_ensure_soundclay_sources_reuses_desktop_audio_and_mutes_microphone(
         "SetInputMute",
         {"inputName": "麦克风/Aux", "inputMuted": True},
     ) in calls
+
+
+def test_ableton_window_selector_allows_explicit_override(monkeypatch) -> None:
+    selector = "My Live Set:Custom Ableton Class:Ableton Live 12 Suite.exe"
+    monkeypatch.setenv("OBS_ABLETON_WINDOW_SELECTOR", selector)
+
+    assert obs_adapter._ableton_window_selector("Ableton Live 12 Suite.exe") == selector
