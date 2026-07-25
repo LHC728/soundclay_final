@@ -172,7 +172,7 @@ input:focus-visible {
 
 .title {
   margin: 0;
-  font-size: clamp(24px, 2.45vw, 38px);
+  font-size: clamp(18px, 2.3vw, 28px);
   line-height: 1.25;
   font-weight: 500;
   letter-spacing: -0.02em;
@@ -181,7 +181,7 @@ input:focus-visible {
 
 .subtitle {
   margin: 9px 0 0;
-  font-size: clamp(11px, 1vw, 15px);
+  font-size: 12px;
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.48);
 }
@@ -191,7 +191,7 @@ input:focus-visible {
   z-index: 50;
   left: 50%;
   bottom: var(--safe-bottom);
-  width: min(94vw, 780px);
+  width: min(92vw, 560px);
   transform: translateX(-50%);
   display: grid;
   justify-items: center;
@@ -200,8 +200,7 @@ input:focus-visible {
 
 .icon-button,
 .primary-button,
-.finish-button,
-.gesture-button {
+.finish-button {
   position: relative;
   z-index: 60;
   display: inline-grid;
@@ -219,8 +218,7 @@ input:focus-visible {
 
 .icon-button:hover,
 .primary-button:hover,
-.finish-button:hover,
-.gesture-button:hover {
+.finish-button:hover {
   transform: translateY(-2px);
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.34);
@@ -228,8 +226,7 @@ input:focus-visible {
 
 .icon-button:active,
 .primary-button:active,
-.finish-button:active,
-.gesture-button:active {
+.finish-button:active {
   transform: scale(0.96);
 }
 
@@ -364,9 +361,9 @@ input:focus-visible {
 }
 
 .sculpt-hud {
-  width: min(92vw, 760px);
+  width: min(84vw, 520px);
   display: grid;
-  gap: 9px;
+  gap: 12px;
 }
 
 .timeline {
@@ -408,23 +405,6 @@ input:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 10px;
-}
-
-.gesture-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.gesture-button {
-  min-height: 36px;
-  padding: 0 16px;
-  border-radius: 999px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
 }
 
 .hint {
@@ -536,40 +516,12 @@ input:focus-visible {
     top: calc(var(--safe-top) + 38px);
   }
 
-  .controls {
-    bottom: var(--safe-bottom);
-  }
-
-  .copy {
-    width: min(94vw, 620px);
-  }
-
-  .title {
-    font-size: clamp(22px, 7vw, 30px);
-  }
-
   .subtitle {
-    margin-top: 6px;
-    font-size: 10px;
-    line-height: 1.45;
-  }
-
-  .sculpt-hud {
-    gap: 7px;
-  }
-
-  .hint {
     display: none;
   }
 
-  .gesture-actions {
-    gap: 6px;
-  }
-
-  .gesture-button {
-    min-height: 32px;
-    padding: 0 11px;
-    font-size: 9px;
+  .controls {
+    bottom: var(--safe-bottom);
   }
 
   .progress-dots {
@@ -588,5 +540,54 @@ input:focus-visible {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+/* 无戒指时保留的动作模拟入口；接入真实戒指后自动隐藏。 */
+.demo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.gesture-button {
+  min-height: 32px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(5, 5, 5, 0.54);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
+  transition:
+    transform 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.gesture-button:hover {
+  transform: translateY(-1px);
+  color: rgba(255, 255, 255, 0.96);
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.gesture-button:active {
+  transform: scale(0.96);
+}
+
+@media (max-width: 680px) {
+  .demo-actions {
+    gap: 6px;
+  }
+
+  .gesture-button {
+    min-height: 30px;
+    padding-inline: 10px;
+    font-size: 9px;
   }
 }

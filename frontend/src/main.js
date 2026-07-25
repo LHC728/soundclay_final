@@ -57,9 +57,12 @@ let recordingTimeout = 0
 let nodes = []
 let toastTimer = 0
 let pointer = null
+let hintTimer = 0
 let completionTimer = 0
 let isCompleting = false
-let swingCount = 0
+let materialRequest = Promise.resolve(null)
+let savedWork = null
+let finalMotion = {}
 const heldTwistKeys = new Set()
 let socket = null
 let reconnectTimer = 0
@@ -111,7 +114,6 @@ function resetRingEventState(sessionId = activeRingSessionId) {
   freezeStateBySession.clear()
   seenDiscreteEvents.clear()
   discreteEventOrder.length = 0
-  swingCount = 0
 }
 
 function acceptsRingSession(eventType, payload) {
@@ -182,6 +184,16 @@ function handleSocketEvent(message) {
       const energy = Math.min(1, Math.max(0, Number(payload.accelMag) || 0))
       sculpture.setTwist(twist)
       sculpture.setEnergy(energy)
+
+      // 预留完整 IMU 姿态：后端未来可直接发送弧度制 pitch / yaw / roll。
+      if ([payload.pitch, payload.yaw, payload.roll].some((value) => Number.isFinite(Number(value)))) {
+        sculpture.setOrientation({
+          pitch: payload.pitch,
+          yaw: payload.yaw,
+          roll: payload.roll,
+        })
+      }
+
       audio.setMorph({ space: (twist + 1) / 2, energy })
       break
     }
@@ -193,30 +205,40 @@ function handleSocketEvent(message) {
       audio.setMorph({ space: (twist + 1) / 2 })
       break
     }
-    case 'burst':
-      if (state === 'sculpt' && !ringFrozen && rememberDiscreteEvent('burst', message.timestamp, payload)) {
-        triggerSwing()
-      }
+    case 'burst': {
+      if (state !== 'sculpt' || ringFrozen) break
+      if (!rememberDiscreteEvent('burst', message.timestamp, payload)) break
+      triggerBurst(payload.strength)
       break
+    }
     case 'push': {
       if (state !== 'sculpt' || ringFrozen) break
-      const direction = String(payload.direction || '').toLowerCase()
-      const value = Number(payload.value ?? payload.strength ?? 1)
-      applyShape(direction === 'pull' || value < 0 ? 'pull' : 'dent')
+      if (!rememberDiscreteEvent('push', message.timestamp, payload)) break
+      const rawDepth = Number(payload.value ?? payload.depth ?? payload.strength ?? 1)
+      const direction = String(payload.direction ?? payload.motion ?? '').toLowerCase()
+      if (direction === 'backward' || direction === 'back' || direction === 'pull' || rawDepth < 0) {
+        triggerPull(Math.abs(rawDepth) || 1)
+      } else {
+        triggerPush(Math.abs(rawDepth) || 1)
+      }
+      break
+    }
+    case 'pull': {
+      if (state !== 'sculpt' || ringFrozen) break
+      if (!rememberDiscreteEvent('pull', message.timestamp, payload)) break
+      triggerPull(Math.abs(Number(payload.strength ?? payload.depth ?? payload.value ?? 1)) || 1)
       break
     }
     case 'freeze': {
-      const sessionId = eventSessionId(payload) || activeRingSessionId || 'unknown'
-      const active = payload.active !== false
-      if (freezeStateBySession.get(sessionId) === active) break
-      freezeStateBySession.set(sessionId, active)
-      if (active && state === 'sculpt') completeCreation({ message: '作品已凝固' })
-      else if (!active) {
-        ringFrozen = false
-        sculpture.freeze(false)
-      }
+      if (state !== 'sculpt' || ringFrozen || payload.active === false) break
+      if (!rememberDiscreteEvent('freeze', message.timestamp, payload)) break
+      completeCreation({ message: '作品已凝固' })
       break
     }
+    case 'saved':
+      savedWork = payload
+      if (state === 'result' && payload.id) showToast(`作品已保存 · ${payload.id}`)
+      break
     case 'error':
       updateConnectionStatus(payload.message || '戒指连接异常', 'error')
       showToast(payload.recommendedAction || payload.message || '戒指连接异常')
@@ -334,29 +356,42 @@ function render() {
       <h1 class="title">用动作雕刻万花筒</h1>
       <p class="subtitle">转腕成球 · 第一次挥动爆散 · 第二次挥动聚合 · 前推压凹 · 后拉放大 · 双击凝固</p>
     `
+    const interactionHint = ringConnected
+      ? '快速挥动切换爆散与聚合；前推压凹，后拉放大，所有形变都不会自动复原'
+      : '拖动转腕 · 快甩切换爆散/聚合 · 缓慢上推压凹 · 缓慢下拉放大 · 双击凝固'
+    const demoActions = ringConnected
+      ? ''
+      : `
+        <div class="demo-actions" aria-label="无戒指动作模拟">
+          <button class="gesture-button" id="demo-sphere" type="button">转腕成球</button>
+          <button class="gesture-button" id="demo-burst" type="button">挥动：爆散 / 聚合</button>
+          <button class="gesture-button" id="demo-push" type="button">向前推：压扁凹陷</button>
+          <button class="gesture-button" id="demo-pull" type="button">向后拉：放大拉起</button>
+        </div>
+      `
     controls.innerHTML = `
       <div class="sculpt-hud">
         <div class="timeline" aria-label="作品播放进度">
           <div class="timeline-track"><div class="timeline-progress"></div></div>
           ${nodes.map((node) => `<span class="timeline-node" style="left:${node.progress * 100}%"></span>`).join('')}
         </div>
-        <div class="hint" id="sculpt-hint">拖动转腕 · 快甩切换爆散/聚合 · 缓慢上推压凹 · 缓慢下拉放大 · 双击凝固</div>
-        <div class="gesture-actions" aria-label="雕刻动作模拟">
-          <button class="gesture-button" id="ball-button">转腕成球</button>
-          <button class="gesture-button" id="swing-button">挥动：爆散 / 聚合</button>
-          <button class="gesture-button" id="dent-button">向前推：压扁凹陷</button>
-          <button class="gesture-button" id="pull-button">向后拉：放大拉起</button>
-        </div>
+        <div class="hint" id="sculpt-hint">${interactionHint}</div>
+        ${demoActions}
         <div class="sculpt-actions">
           <button class="finish-button" id="finish-button">凝固作品</button>
         </div>
       </div>
     `
-    document.querySelector('#ball-button').addEventListener('click', () => applyShape('ball'))
-    document.querySelector('#swing-button').addEventListener('click', triggerSwing)
-    document.querySelector('#dent-button').addEventListener('click', () => applyShape('dent'))
-    document.querySelector('#pull-button').addEventListener('click', () => applyShape('pull'))
     document.querySelector('#finish-button').addEventListener('click', finishCreation)
+    document.querySelector('#demo-sphere')?.addEventListener('click', demoSphere)
+    document.querySelector('#demo-burst')?.addEventListener('click', () => triggerBurst(1))
+    document.querySelector('#demo-push')?.addEventListener('click', () => triggerPush(1))
+    document.querySelector('#demo-pull')?.addEventListener('click', () => triggerPull(1))
+    clearTimeout(hintTimer)
+    hintTimer = window.setTimeout(() => {
+      const hint = document.querySelector('#sculpt-hint')
+      if (hint) hint.style.opacity = '0'
+    }, 4300)
     return
   }
 
@@ -433,41 +468,22 @@ function setMode(value) {
 
 function enterSculpt() {
   nodes = []
+  savedWork = null
+  finalMotion = { burstCount: 0, pushCount: 0, pullCount: 0, frozen: false }
   ringFrozen = false
   isCompleting = false
-  swingCount = 0
   clearTimeout(completionTimer)
   sculpture.freeze(false)
   sculpture.setPreviewRotation(0)
   sculpture.setTwist(0)
-  sculpture.setShape('ball')
   audio.setMode(mode)
-  // 浏览器只保留静音分析和进度，实际声音由 Ableton Live 播放。
+  // 浏览器只做静音分析和进度驱动，实际音乐始终由 Ableton Live 播放。
   audio.playLoop({ muted: true })
   setState('sculpt')
-  void triggerAbletonScene().catch((error) => {
-    showError(error instanceof Error ? error.message : '无法触发 Ableton Live。')
+  materialRequest = triggerAbletonScene().catch((error) => {
+    showToast(error instanceof Error ? error.message : '无法触发 Ableton Live')
+    return null
   })
-}
-
-function applyShape(shape) {
-  if (state !== 'sculpt' || ringFrozen) return
-  sculpture.setShape(shape)
-  const labels = {
-    ball: '转腕成球',
-    burst: '粒子爆散',
-    aggregate: '粒子聚合',
-    dent: '向前压凹',
-    pull: '向后拉起',
-  }
-  showToast(labels[shape] || '形态已改变')
-}
-
-function triggerSwing() {
-  if (state !== 'sculpt' || ringFrozen) return
-  const shape = swingCount % 2 === 0 ? 'burst' : 'aggregate'
-  swingCount += 1
-  applyShape(shape)
 }
 
 async function triggerAbletonScene() {
@@ -478,8 +494,9 @@ async function triggerAbletonScene() {
   })
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}))
-    throw new Error(detail.detail || `无法触发 Ableton Live（HTTP ${response.status}）。`)
+    throw new Error(detail.detail || `无法触发 Ableton Live（HTTP ${response.status}）`)
   }
+  return response.json()
 }
 
 function showToast(message = '已留下') {
@@ -499,6 +516,53 @@ function addNode() {
   render()
 }
 
+function demoSphere() {
+  if (state !== 'sculpt' || ringFrozen) return
+  sculpture.setTwist(0.9, true)
+  audio.setMorph({ space: 0.95 })
+  showToast('万花筒正在球化')
+  window.setTimeout(() => sculpture.setTwist(0), 520)
+}
+
+function triggerBurst(strength = 1) {
+  if (state !== 'sculpt' || ringFrozen) return
+  const normalized = Math.min(1.35, Math.max(0.16, Number(strength) || 1))
+  const action = sculpture.burst(normalized)
+  finalMotion.burstCount = Number(finalMotion.burstCount || 0) + 1
+  finalMotion.lastBurstStrength = normalized
+
+  if (action === 'gather') {
+    audio.setMorph({ energy: Math.max(0.28, audio.energy * 0.72) })
+    showToast('粒子正在沿原轨迹聚合')
+    return
+  }
+
+  if (action === 'explode') {
+    audio.setMorph({ energy: Math.min(1, 0.72 + normalized * 0.2) })
+    showToast('万花筒球体爆散 · 电影碎屑已展开 · 再挥一次聚合')
+  }
+}
+
+function triggerPush(strength = 1) {
+  if (state !== 'sculpt' || ringFrozen) return
+  const normalized = Math.min(1.35, Math.max(0.12, Number(strength) || 1))
+  sculpture.push(normalized)
+  finalMotion.pushCount = Number(finalMotion.pushCount || 0) + 1
+  finalMotion.pushStrength = normalized
+  audio.setMorph({ space: Math.max(0.08, audio.space - normalized * 0.18) })
+  showToast('前推：球体已压扁、扩大并留下凹陷')
+}
+
+function triggerPull(strength = 1) {
+  if (state !== 'sculpt' || ringFrozen) return
+  const normalized = Math.min(1.35, Math.max(0.12, Number(strength) || 1))
+  sculpture.pull(normalized)
+  finalMotion.pullCount = Number(finalMotion.pullCount || 0) + 1
+  finalMotion.pullStrength = normalized
+  audio.setMorph({ space: Math.min(1, audio.space + normalized * 0.16) })
+  showToast('后拉：作品继续放大，凹陷边缘被拉起')
+}
+
 function completeCreation({ message = '作品已凝固', burst = false } = {}) {
   if (state !== 'sculpt' || ringFrozen || isCompleting) return
   isCompleting = true
@@ -511,34 +575,37 @@ function completeCreation({ message = '作品已凝固', burst = false } = {}) {
   const finalize = () => {
     completionTimer = 0
     ringFrozen = true
+    finalMotion.frozen = true
+    finalMotion.frozenAt = Date.now()
     sculpture.setTwist(0)
     sculpture.freeze(true)
     audio.stopPlayback()
-    void stopAbletonPlayback().catch((error) => {
-      showError(error instanceof Error ? error.message : '无法停止 Ableton Live。')
-    })
     setState('result')
     showToast(message)
     isCompleting = false
+    void stopAbletonPlayback().catch((error) => {
+      showToast(error instanceof Error ? error.message : '无法停止 Ableton Live')
+    })
+    void saveCurrentWork()
   }
 
   if (burst) completionTimer = window.setTimeout(finalize, 260)
   else finalize()
 }
 
+function finishCreation() {
+  completeCreation({ message: '作品已完成', burst: false })
+}
+
 async function stopAbletonPlayback() {
   const response = await fetch(`${API_BASE}/api/ableton/stop`, { method: 'POST' })
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}))
-    throw new Error(detail.detail || `无法停止 Ableton Live（HTTP ${response.status}）。`)
+    throw new Error(detail.detail || `无法停止 Ableton Live（HTTP ${response.status}）`)
   }
   const result = await response.json()
-  if (!result.ok) throw new Error('Ableton Live 停止指令未发送。')
-}
-
-function finishCreation() {
-  // 当前阶段用页面按钮结束，不接入双击戒指。
-  completeCreation({ message: '作品已完成', burst: false })
+  if (!result.ok) throw new Error('Ableton Live 未连接，停止指令未发送')
+  return result
 }
 
 async function togglePlayback() {
@@ -546,7 +613,45 @@ async function togglePlayback() {
     await triggerAbletonScene()
     showToast('已在 Ableton Live 中播放')
   } catch (error) {
-    showError(error instanceof Error ? error.message : '无法触发 Ableton Live。')
+    showToast(error instanceof Error ? error.message : '无法触发 Ableton Live')
+  }
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(reader.result), { once: true })
+    reader.addEventListener('error', () => reject(new Error('无法编码本地作品')), { once: true })
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function saveCurrentWork() {
+  try {
+    await materialRequest
+    const screenshotBlob = await sculpture.captureBlob()
+    const processedAudioBlob = audio.hasRecording ? await audio.exportProcessedWav() : null
+    const [screenshotDataUrl, processedAudioDataUrl] = await Promise.all([
+      blobToDataUrl(screenshotBlob),
+      processedAudioBlob ? blobToDataUrl(processedAudioBlob) : Promise.resolve(null),
+    ])
+    const response = await fetch(`${API_BASE}/api/save`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        screenshot_data_url: screenshotDataUrl,
+        processed_audio_data_url: processedAudioDataUrl,
+        final_motion: finalMotion,
+      }),
+    })
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}))
+      throw new Error(detail.detail || `本地保存失败（HTTP ${response.status}）`)
+    }
+    savedWork = await response.json()
+    if (savedWork.id) showToast(`作品已保存 · ${savedWork.id}`)
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '本地保存失败')
   }
 }
 
@@ -600,13 +705,16 @@ function restart() {
   clearTimeout(completionTimer)
   audio.reset()
   nodes = []
+  savedWork = null
+  finalMotion = {}
+  materialRequest = Promise.resolve(null)
   resetRingEventState(null)
   mode = 0.5
-  swingCount = 0
   sculpture.reset()
   sculpture.setMode(mode)
   sculpture.setProgress(0)
   setState('idle')
+  void fetch(`${API_BASE}/api/reset`, { method: 'POST' }).catch(() => {})
 }
 
 function showError(message) {
@@ -630,7 +738,21 @@ interactionLayer.addEventListener('pointerdown', (event) => {
   if (!['mode', 'sculpt'].includes(state) || (state === 'sculpt' && ringFrozen)) return
   interactionLayer.setPointerCapture(event.pointerId)
   const point = normalizedPointer(event)
-  pointer = { id: event.pointerId, startX: event.clientX, startY: event.clientY, moved: false, point }
+  const now = performance.now()
+  pointer = {
+    id: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    lastX: event.clientX,
+    lastY: event.clientY,
+    startedAt: now,
+    lastAt: now,
+    moved: false,
+    peakSpeed: 0,
+    totalDx: 0,
+    totalDy: 0,
+    point,
+  }
 
   if (state === 'mode') {
     // 屏幕左侧 = 舒缓，屏幕右侧 = 释放。
@@ -645,7 +767,19 @@ interactionLayer.addEventListener('pointermove', (event) => {
   if (!pointer || pointer.id !== event.pointerId) return
   if (state === 'sculpt' && ringFrozen) return
   const point = normalizedPointer(event)
-  const movedDistance = Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY)
+  const now = performance.now()
+  const dt = Math.max(1, now - pointer.lastAt)
+  const dx = event.clientX - pointer.lastX
+  const dy = event.clientY - pointer.lastY
+  const speed = Math.hypot(dx, dy) / dt
+  pointer.peakSpeed = Math.max(pointer.peakSpeed, speed)
+  pointer.totalDx = event.clientX - pointer.startX
+  pointer.totalDy = event.clientY - pointer.startY
+  pointer.lastX = event.clientX
+  pointer.lastY = event.clientY
+  pointer.lastAt = now
+
+  const movedDistance = Math.hypot(pointer.totalDx, pointer.totalDy)
   if (movedDistance > 7) pointer.moved = true
 
   if (state === 'mode') {
@@ -669,7 +803,20 @@ function finishPointer(event) {
 
   if (state === 'sculpt') {
     sculpture.setTwist(0)
-    if (!pointer.moved) addNode()
+    const duration = Math.max(1, performance.now() - pointer.startedAt)
+    const distance = Math.hypot(pointer.totalDx, pointer.totalDy)
+    const isFastSwipe = pointer.peakSpeed > 1.15 && distance > 64
+    const isForwardPush = duration > 220
+      && pointer.totalDy < -72
+      && Math.abs(pointer.totalDy) > Math.abs(pointer.totalDx) * 1.12
+    const isBackwardPull = duration > 220
+      && pointer.totalDy > 72
+      && Math.abs(pointer.totalDy) > Math.abs(pointer.totalDx) * 1.12
+
+    if (isFastSwipe) triggerBurst(Math.min(1.35, 0.55 + pointer.peakSpeed * 0.42))
+    else if (isForwardPush) triggerPush(Math.min(1.3, 0.62 + Math.abs(pointer.totalDy) / 300))
+    else if (isBackwardPull) triggerPull(Math.min(1.3, 0.62 + Math.abs(pointer.totalDy) / 300))
+    else if (!pointer.moved) addNode()
   }
 
   pointer = null
@@ -677,11 +824,6 @@ function finishPointer(event) {
 
 interactionLayer.addEventListener('pointerup', finishPointer)
 interactionLayer.addEventListener('pointercancel', finishPointer)
-interactionLayer.addEventListener('dblclick', (event) => {
-  if (state !== 'sculpt' || ringFrozen) return
-  event.preventDefault()
-  completeCreation({ message: '作品已凝固' })
-})
 
 function applyKeyboardTwist() {
   if (state !== 'sculpt' || ringFrozen) return
@@ -704,6 +846,30 @@ window.addEventListener('keydown', (event) => {
     return
   }
 
+  if (!event.repeat && event.code === 'KeyB' && state === 'sculpt') {
+    event.preventDefault()
+    triggerBurst(1)
+    return
+  }
+
+  if (!event.repeat && event.code === 'KeyP' && state === 'sculpt') {
+    event.preventDefault()
+    triggerPush(1)
+    return
+  }
+
+  if (!event.repeat && event.code === 'KeyL' && state === 'sculpt') {
+    event.preventDefault()
+    triggerPull(1)
+    return
+  }
+
+  if (!event.repeat && event.code === 'KeyF' && state === 'sculpt') {
+    event.preventDefault()
+    completeCreation({ message: '作品已凝固' })
+    return
+  }
+
   if (event.key.toLowerCase() === 'r' && state === 'sculpt') {
     nodes.pop()
     showToast('已撤回')
@@ -715,6 +881,12 @@ window.addEventListener('keyup', (event) => {
   if (!['ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD'].includes(event.code)) return
   heldTwistKeys.delete(event.code)
   applyKeyboardTwist()
+})
+
+interactionLayer.addEventListener('dblclick', (event) => {
+  if (state !== 'sculpt' || ringFrozen) return
+  event.preventDefault()
+  completeCreation({ message: '作品已凝固' })
 })
 
 window.addEventListener('soundclay:gesture', (event) => {
@@ -733,25 +905,44 @@ window.addEventListener('soundclay:gesture', (event) => {
     case 'rotate': {
       const x = Math.min(1, Math.max(-1, Number(detail.x ?? detail.value ?? 0)))
       sculpture.setTwist(x)
+      if ([detail.pitch, detail.yaw, detail.roll].some((value) => Number.isFinite(Number(value)))) {
+        sculpture.setOrientation(detail)
+      }
       audio.setMorph({ space: (x + 1) / 2 })
       break
     }
-    case 'lift':
-      applyShape('pull')
-      audio.setMorph({ energy: Math.min(1, strength) })
+    case 'swipe':
+    case 'burst':
+      triggerBurst(strength)
       break
     case 'press':
-      applyShape('dent')
-      audio.setMorph({ energy: 1 - Math.min(1, strength) })
+    case 'push': {
+      const direction = String(detail.direction ?? detail.motion ?? '').toLowerCase()
+      const signedDepth = Number(detail.depth ?? detail.value ?? strength)
+      if (direction === 'backward' || direction === 'back' || direction === 'pull' || signedDepth < 0) {
+        triggerPull(Math.abs(signedDepth) || strength)
+      } else {
+        triggerPush(Math.abs(signedDepth) || strength)
+      }
       break
+    }
+    case 'pull':
+      triggerPull(strength)
+      break
+    case 'depth': {
+      const signedDepth = Math.min(1.5, Math.max(-1.5, Number(detail.value ?? detail.depth ?? 0)))
+      if (signedDepth > 0.04) triggerPush(signedDepth)
+      else if (signedDepth < -0.04) triggerPull(Math.abs(signedDepth))
+      break
+    }
     case 'tap':
-      addNode()
+      if (detail.count >= 2 || detail.double === true) completeCreation({ message: '作品已凝固' })
       break
+    case 'freeze':
+      completeCreation({ message: '作品已凝固' })
+      break
+    case 'lift':
     case 'hold':
-      if (detail.active !== false) completeCreation({ message: '作品已凝固' })
-      break
-    case 'swipe':
-      triggerSwing()
       break
     default:
       break
