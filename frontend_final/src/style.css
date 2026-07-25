@@ -282,6 +282,38 @@ input:focus-visible {
   text-align: center;
 }
 
+.emotion-options {
+  width: min(86vw, 520px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.emotion-button {
+  min-width: 92px;
+  padding: 11px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(8, 8, 8, 0.72);
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.emotion-button:hover,
+.emotion-button.is-suggested {
+  border-color: rgba(255, 255, 255, 0.68);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.emotion-button:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+
 .mode-control {
   width: min(82vw, 430px);
   display: grid;

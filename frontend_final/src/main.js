@@ -3,6 +3,7 @@ import { createSculpture } from './sculpture.js'
 import { SoundClayAudio } from './audio.js'
 import {
   analyzeRecording,
+  confirmEmotion,
   createPublicWork,
   shareUrl,
   startObsRecording,
@@ -55,7 +56,24 @@ const audio = new SoundClayAudio({
   },
 })
 
-const STATE_INDEX = { idle: 0, recording: 0, understanding: 1, mode: 1, sculpt: 2, result: 3 }
+const STATE_INDEX = { idle: 0, recording: 0, understanding: 1, emotion: 1, mode: 1, sculpt: 2, result: 3 }
+const EMOTION_OPTIONS = [
+  { value: 'joy', label: '喜悦' },
+  { value: 'anger', label: '愤怒' },
+  { value: 'sadness', label: '悲伤' },
+  { value: 'anxiety', label: '焦虑' },
+  { value: 'neutral_mixed', label: '中性 / 混合' },
+]
+const DEMO_MOTION_SEQUENCE = [
+  { type: 'twist', delayMs: 0 },
+  { type: 'twist', delayMs: 5000 },
+  { type: 'twist', delayMs: 5000 },
+  { type: 'burst', delayMs: 2000 },
+  { type: 'burst', delayMs: 2000 },
+  { type: 'finger', value: -1, delayMs: 5000 },
+  { type: 'finger', value: 1, delayMs: 2000 },
+  { type: 'finger', value: 1, delayMs: 2000 },
+]
 let state = 'idle'
 let mode = 0.5
 let modeSelectionCommitted = false
@@ -74,6 +92,8 @@ let savedWork = null
 let savePromise = Promise.resolve(null)
 let finalMotion = {}
 let detectedEmotion = 'neutral_mixed'
+let demoSequenceArmed = false
+let demoSequenceRunId = 0
 let obsRecordingStarted = false
 let obsStartPromise = Promise.resolve(false)
 const lastAbletonSync = { twist: 0, finger: 0 }
@@ -356,14 +376,12 @@ function render() {
       <h1 class="title">正在聆听</h1>
       <p class="subtitle">声音越自由，材料越丰富。</p>
     `
-    controls.innerHTML = ringConnected
-      ? `<div class="ring-listening"><span class="ring-pulse"></span><span>请长按戒指说话</span></div>`
-      : `
-        <button class="icon-button record-button" id="stop-button" aria-label="结束录音" data-recording="true">
-          <span class="record-dot"></span>
-        </button>
-        <div class="tiny-label" id="record-time">00:00</div>
-      `
+    controls.innerHTML = `
+      <button class="icon-button record-button" id="stop-button" aria-label="结束录音" data-recording="true">
+        <span class="record-dot"></span>
+      </button>
+      <div class="tiny-label" id="record-time">00:00</div>
+    `
     document.querySelector('#stop-button')?.addEventListener('click', stopRecording)
     updateRecordingTime()
     recordingTimer = window.setInterval(updateRecordingTime, 250)
@@ -379,6 +397,24 @@ function render() {
       <div class="analysis-loader" aria-label="正在读取声音"></div>
       <div class="tiny-label">读取声音 · 塑造材料</div>
     `
+    return
+  }
+
+  if (state === 'emotion') {
+    copy.innerHTML = `
+      <h1 class="title">选择此刻的情绪</h1>
+      <p class="subtitle">请选择最接近这段声音的感受。</p>
+    `
+    controls.innerHTML = `
+      <div class="emotion-options" aria-label="选择情绪">
+        ${EMOTION_OPTIONS.map(({ value, label }) => `
+          <button class="emotion-button${detectedEmotion === value ? ' is-suggested' : ''}" type="button" data-emotion="${value}">${label}</button>
+        `).join('')}
+      </div>
+    `
+    document.querySelectorAll('[data-emotion]').forEach((button) => {
+      button.addEventListener('click', () => selectEmotion(button.dataset.emotion))
+    })
     return
   }
 
@@ -470,16 +506,6 @@ function render() {
 
 async function startRecording() {
   try {
-    if (ringConnected) {
-      const response = await fetch(`${API_BASE}/api/ring/session/start`, { method: 'POST' })
-      if (!response.ok) {
-        const detail = await response.json().catch(() => ({}))
-        throw new Error(detail.detail || `无法启动戒指录音（HTTP ${response.status}）。`)
-      }
-      recordingStartedAt = performance.now()
-      setState('recording')
-      return
-    }
     await audio.startRecording()
     recordingStartedAt = performance.now()
     setState('recording')
@@ -506,9 +532,26 @@ async function stopRecording() {
     const analysis = await analyzeRecording(audio.exportOriginalWav())
     detectedEmotion = analysis.emotion || 'neutral_mixed'
     setMode(0.5)
-    setState('mode')
+    setState('emotion')
   } catch (error) {
     showError(error instanceof Error ? error.message : '无法完成录音。')
+  }
+}
+
+async function selectEmotion(emotion) {
+  if (!EMOTION_OPTIONS.some((option) => option.value === emotion)) return
+  const buttons = [...document.querySelectorAll('[data-emotion]')]
+  buttons.forEach((button) => { button.disabled = true })
+
+  try {
+    await confirmEmotion(emotion)
+    detectedEmotion = emotion
+    demoSequenceArmed = true
+    setMode(0.5)
+    setState('mode')
+  } catch (error) {
+    buttons.forEach((button) => { button.disabled = false })
+    showErrorToast(error instanceof Error ? error.message : '无法确认情绪')
   }
 }
 
@@ -559,6 +602,10 @@ function enterSculpt() {
     showErrorToast(error instanceof Error ? error.message : '无法触发 Ableton Live')
     return null
   })
+  if (demoSequenceArmed) {
+    demoSequenceArmed = false
+    void materialRequest.finally(() => runDemoMotionSequence())
+  }
   return materialRequest
 }
 
@@ -620,6 +667,29 @@ function demoSphere() {
   }, 520)
 }
 
+function stopDemoMotionSequence() {
+  demoSequenceRunId += 1
+}
+
+function waitForDemoDelay(delayMs, runId) {
+  if (delayMs <= 0) return Promise.resolve(runId === demoSequenceRunId)
+  return new Promise((resolve) => {
+    window.setTimeout(() => resolve(runId === demoSequenceRunId), delayMs)
+  })
+}
+
+async function runDemoMotionSequence() {
+  const runId = ++demoSequenceRunId
+  for (const action of DEMO_MOTION_SEQUENCE) {
+    const isCurrent = await waitForDemoDelay(action.delayMs, runId)
+    if (!isCurrent || state !== 'sculpt' || ringFrozen) return
+
+    if (action.type === 'twist') demoSphere()
+    else if (action.type === 'burst') triggerBurst(1, { syncAbleton: true })
+    else if (action.type === 'finger') applySizeControl(action.value, { notify: true, syncAbleton: true })
+  }
+}
+
 function triggerBurst(strength = 1, { syncAbleton = false } = {}) {
   if (state !== 'sculpt' || ringFrozen) return
   const normalized = Math.min(1.35, Math.max(0.16, Number(strength) || 1))
@@ -675,6 +745,7 @@ function triggerPull(strength = 1) {
 
 function completeCreation({ message = '作品已凝固', burst = false } = {}) {
   if (state !== 'sculpt' || ringFrozen || isCompleting) return
+  stopDemoMotionSequence()
   isCompleting = true
 
   if (burst) {
@@ -934,6 +1005,8 @@ function downloadBlob(blob, name) {
 }
 
 function restart() {
+  stopDemoMotionSequence()
+  demoSequenceArmed = false
   clearTimeout(recordingTimeout)
   clearInterval(recordingTimer)
   clearTimeout(completionTimer)

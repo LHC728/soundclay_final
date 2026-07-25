@@ -44,6 +44,15 @@ export async function analyzeRecording(wavBlob) {
   return transcribed.json()
 }
 
+export async function confirmEmotion(emotion) {
+  const response = await request('/api/emotion/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ emotion }),
+  })
+  return response.json()
+}
+
 export async function createPublicWork(payload) {
   const response = await request('/api/public/works', {
     method: 'POST',
