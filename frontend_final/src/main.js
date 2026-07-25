@@ -3,7 +3,6 @@ import { createSculpture } from './sculpture.js'
 import { SoundClayAudio } from './audio.js'
 import {
   analyzeRecording,
-  confirmEmotion,
   createPublicWork,
   shareUrl,
   startObsRecording,
@@ -56,14 +55,7 @@ const audio = new SoundClayAudio({
   },
 })
 
-const STATE_INDEX = { idle: 0, recording: 0, understanding: 1, emotion: 1, mode: 1, sculpt: 2, result: 3 }
-const EMOTION_OPTIONS = [
-  { value: 'joy', label: '喜悦' },
-  { value: 'anger', label: '愤怒' },
-  { value: 'sadness', label: '悲伤' },
-  { value: 'anxiety', label: '焦虑' },
-  { value: 'neutral_mixed', label: '中性 / 混合' },
-]
+const STATE_INDEX = { idle: 0, recording: 0, understanding: 1, mode: 1, sculpt: 2, result: 3 }
 const DEMO_MOTION_SEQUENCE = [
   { type: 'twist', delayMs: 0 },
   { type: 'twist', delayMs: 5000 },
@@ -400,24 +392,6 @@ function render() {
     return
   }
 
-  if (state === 'emotion') {
-    copy.innerHTML = `
-      <h1 class="title">选择此刻的情绪</h1>
-      <p class="subtitle">请选择最接近这段声音的感受。</p>
-    `
-    controls.innerHTML = `
-      <div class="emotion-options" aria-label="选择情绪">
-        ${EMOTION_OPTIONS.map(({ value, label }) => `
-          <button class="emotion-button${detectedEmotion === value ? ' is-suggested' : ''}" type="button" data-emotion="${value}">${label}</button>
-        `).join('')}
-      </div>
-    `
-    document.querySelectorAll('[data-emotion]').forEach((button) => {
-      button.addEventListener('click', () => selectEmotion(button.dataset.emotion))
-    })
-    return
-  }
-
   if (state === 'mode') {
     copy.innerHTML = `
       <h1 class="title">选择声音的方向</h1>
@@ -531,27 +505,11 @@ async function stopRecording() {
     setState('understanding')
     const analysis = await analyzeRecording(audio.exportOriginalWav())
     detectedEmotion = analysis.emotion || 'neutral_mixed'
-    setMode(0.5)
-    setState('emotion')
-  } catch (error) {
-    showError(error instanceof Error ? error.message : '无法完成录音。')
-  }
-}
-
-async function selectEmotion(emotion) {
-  if (!EMOTION_OPTIONS.some((option) => option.value === emotion)) return
-  const buttons = [...document.querySelectorAll('[data-emotion]')]
-  buttons.forEach((button) => { button.disabled = true })
-
-  try {
-    await confirmEmotion(emotion)
-    detectedEmotion = emotion
     demoSequenceArmed = true
     setMode(0.5)
     setState('mode')
   } catch (error) {
-    buttons.forEach((button) => { button.disabled = false })
-    showErrorToast(error instanceof Error ? error.message : '无法确认情绪')
+    showError(error instanceof Error ? error.message : '无法完成录音。')
   }
 }
 
