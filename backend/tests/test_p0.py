@@ -702,6 +702,17 @@ def test_ableton_midi_reuses_saved_live_set_mapping(monkeypatch) -> None:
         lambda: ["GesturePort 1", "SoundClay MIDI 2"],
     )
     monkeypatch.setattr(ableton_adapter.mido, "open_output", lambda name: port)
+
+    class ImmediateTimer:
+        daemon = False
+
+        def __init__(self, _interval, function):
+            self.function = function
+
+        def start(self):
+            self.function()
+
+    monkeypatch.setattr(ableton_adapter.threading, "Timer", ImmediateTimer)
     ableton_adapter.close_midi_output()
 
     assert ableton_adapter.send_scene("joy", "express") is True

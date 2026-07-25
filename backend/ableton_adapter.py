@@ -18,7 +18,7 @@ _MIDI_CC_TIMBRE = 20
 _MIDI_CC_MAIN_GAIN = 21
 _MIDI_NOTE_BURST = 70
 _MIDI_BURST_HIT_COUNT = 2
-_MIDI_BURST_HIT_INTERVAL_SECONDS = 0.22
+_MIDI_BURST_HIT_INTERVAL_SECONDS = 0.1
 _MIDI_SCENE_NOTE_HOLD_SECONDS = 0.3
 _MIDI_TIMBRE_VALUES = (16, 64, 112)
 _MIDI_TWIST_DEAD_ZONE = 0.25
@@ -286,12 +286,15 @@ def send_midi_note(note: int, velocity: int = 127, *, hold_seconds: float = 0.0)
 
 
 def send_burst_hits(velocity: int) -> bool:
-    """Trigger the mapped Drum Layer twice for one physical wave gesture."""
-    sent = False
-    for index in range(_MIDI_BURST_HIT_COUNT):
-        sent = send_midi_note(_MIDI_NOTE_BURST, velocity) or sent
-        if index + 1 < _MIDI_BURST_HIT_COUNT:
-            time.sleep(_MIDI_BURST_HIT_INTERVAL_SECONDS)
+    """Trigger two drum hits without delaying the gesture response."""
+    sent = send_midi_note(_MIDI_NOTE_BURST, velocity)
+
+    def send_second_hit() -> None:
+        send_midi_note(_MIDI_NOTE_BURST, velocity)
+
+    timer = threading.Timer(_MIDI_BURST_HIT_INTERVAL_SECONDS, send_second_hit)
+    timer.daemon = True
+    timer.start()
     return sent
 
 
