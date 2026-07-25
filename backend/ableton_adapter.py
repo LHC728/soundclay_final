@@ -17,6 +17,7 @@ _DEFAULT_MIDI_PORT = "SoundClay MIDI"
 _MIDI_CC_TIMBRE = 20
 _MIDI_CC_MAIN_GAIN = 21
 _MIDI_NOTE_BURST = 70
+_MIDI_NOTE_STOP = 71
 _MIDI_BURST_HIT_COUNT = 2
 _MIDI_BURST_HIT_INTERVAL_SECONDS = 0.1
 _MIDI_SCENE_NOTE_HOLD_SECONDS = 0.3
@@ -150,6 +151,10 @@ def status() -> dict[str, Any]:
                     "number": _MIDI_NOTE_BURST,
                     "hitsPerGesture": _MIDI_BURST_HIT_COUNT,
                     "intervalMs": round(_MIDI_BURST_HIT_INTERVAL_SECONDS * 1000),
+                },
+                "stopAll": {
+                    "type": "note",
+                    "number": _MIDI_NOTE_STOP,
                 },
             },
             "scenes": {
@@ -311,10 +316,13 @@ def send_scene(emotion: str, mode: str) -> bool:
 
 
 def send_stop() -> bool:
-    """Stop Live through MIDI Clock and preserve the existing OSC freeze signal."""
-    midi_sent = _send_midi(mido.Message("stop"))
+    """Stop Live through a Remote mapping, MIDI Clock, and the OSC freeze signal."""
+    note_sent = send_midi_note(
+        _MIDI_NOTE_STOP, hold_seconds=_MIDI_SCENE_NOTE_HOLD_SECONDS
+    )
+    clock_sent = _send_midi(mido.Message("stop"))
     osc_sent = send_control("freeze", 1)
-    return midi_sent or osc_sent
+    return note_sent or clock_sent or osc_sent
 
 
 def _osc_string(value: str) -> bytes:

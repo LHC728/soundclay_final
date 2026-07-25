@@ -9,7 +9,6 @@ const app = document.querySelector('#app')
 app.innerHTML = `
   <main class="soundclay" data-state="idle">
     <p class="brand">SoundClay</p>
-    <div class="connection-status" id="connection-status" data-connection="connecting">正在连接后端</div>
 
     <section class="stage" aria-live="polite">
       <div class="visual" id="visual" aria-hidden="true"></div>
@@ -101,6 +100,7 @@ function setState(nextState) {
 }
 
 function updateConnectionStatus(message, connection = 'offline') {
+  if (!connectionStatus) return
   connectionStatus.textContent = message
   connectionStatus.dataset.connection = connection
 }
@@ -325,7 +325,6 @@ function render() {
   if (state === 'idle') {
     copy.innerHTML = `
       <h1 class="title">发出一段声音</h1>
-      <p class="subtitle">说话、唱歌，或发出任何声音。</p>
     `
     controls.innerHTML = `
       <button class="icon-button record-button" id="record-button" aria-label="开始录音" data-recording="false">
@@ -388,7 +387,7 @@ function render() {
 
   if (state === 'sculpt') {
     copy.innerHTML = `
-      <h1 class="title">用动作雕刻万花筒</h1>
+      <h1 class="title">用动作雕刻声音</h1>
       <p class="subtitle">转腕旋转 · 挥动爆散 · 左小右大 · 双击凝固</p>
     `
     const interactionHint = ringConnected
@@ -428,13 +427,11 @@ function render() {
   `
   controls.innerHTML = `
     <div class="result-actions">
-      <button class="icon-button" id="play-button" aria-label="在 Ableton Live 中播放">${icons.play}</button>
       <button class="icon-button" id="share-button" aria-label="分享作品">${icons.share}</button>
       <button class="icon-button" id="restart-button" aria-label="重新开始">${icons.restart}</button>
     </div>
-    <div class="tiny-label">播放 · 分享 · 重来</div>
+    <div class="tiny-label">分享 · 重来</div>
   `
-  document.querySelector('#play-button').addEventListener('click', togglePlayback)
   document.querySelector('#share-button').addEventListener('click', shareWork)
   document.querySelector('#restart-button').addEventListener('click', restart)
 }

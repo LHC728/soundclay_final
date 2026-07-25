@@ -793,7 +793,7 @@ def test_frontend_ableton_motion_route_maps_signed_controls(client, monkeypatch)
     ]
 
 
-def test_ableton_stop_sends_midi_clock_stop(monkeypatch) -> None:
+def test_ableton_stop_sends_remote_note_and_midi_clock_stop(monkeypatch) -> None:
     messages = []
 
     class FakePort:
@@ -813,7 +813,8 @@ def test_ableton_stop_sends_midi_clock_stop(monkeypatch) -> None:
     ableton_adapter.close_midi_output()
 
     assert ableton_adapter.send_stop() is True
-    assert [message.type for message in messages] == ["stop"]
+    assert [message.type for message in messages] == ["note_on", "note_off", "stop"]
+    assert [message.note for message in messages[:2]] == [71, 71]
     ableton_adapter.close_midi_output()
 
 

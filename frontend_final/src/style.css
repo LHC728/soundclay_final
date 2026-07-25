@@ -451,7 +451,8 @@ input:focus-visible {
 
 .result-actions {
   display: flex;
-  gap: 12px;
+  justify-content: center;
+  gap: 20px;
 }
 
 .result-actions .icon-button {
