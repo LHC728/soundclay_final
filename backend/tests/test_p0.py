@@ -56,6 +56,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("EMOTION_PROVIDER", "local")
     monkeypatch.setenv("ABLETON_OSC_ENABLED", "false")
     monkeypatch.setenv("ABLETON_MIDI_ENABLED", "false")
+    monkeypatch.setenv("SOUNDCLAY_RING_ENABLED", "false")
     emotion_adapter._reset_runtime_state()
     server.session = SessionState(session_id="test-session")
     server.bus = EventBus()
@@ -1273,6 +1274,32 @@ def test_sensevoice_transcript_keeps_audio_emotion_metadata(monkeypatch, tmp_pat
     assert transcript.provider == "sensevoice"
     assert transcript.speech_emotion == Emotion.SADNESS
     assert transcript.raw_emotion == "SAD"
+
+
+def test_isolated_sensevoice_worker_response_is_decoded(monkeypatch, tmp_path) -> None:
+    audio = tmp_path / "ring.wav"
+    audio.write_bytes(b"RIFF")
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return (
+                b'worker log\nSOUNDCLAY_RESULT_JSON={"text":"hello","provider":"sensevoice",'
+                b'"speech_emotion":"joy","raw_emotion":"HAPPY"}\n',
+                b"",
+            )
+
+    create_process = AsyncMock(return_value=FakeProcess())
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+
+    recognition = asyncio.run(stt_adapter._transcribe_sensevoice_isolated(audio))
+
+    assert recognition.text == "hello"
+    assert recognition.provider == "sensevoice"
+    assert recognition.speech_emotion == Emotion.JOY
+    assert recognition.raw_emotion == "HAPPY"
+    create_process.assert_awaited_once()
 
 
 def test_sensevoice_emotion_is_the_primary_decision_signal() -> None:

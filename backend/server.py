@@ -970,11 +970,18 @@ async def _ingest_ring_event(raw: dict, *, source: str) -> dict:
                     },
                 )
 
-        task = asyncio.create_task(
-            _run_ring_audio_pipeline(metadata["audio_id"]),
-            name=f"ring-stt-{metadata['audio_id'][:12]}",
-        )
-        _track_ring_audio_task(task)
+        if source == "ring_runtime":
+            # Keep the BLE runtime in audio_ready until local recognition has
+            # finished. Entering WinRT motion streaming while Torch/FunASR is
+            # loading can crash the whole Windows Python process, which drops
+            # the transcript WebSocket event before the frontend receives it.
+            await _run_ring_audio_pipeline(metadata["audio_id"])
+        else:
+            task = asyncio.create_task(
+                _run_ring_audio_pipeline(metadata["audio_id"]),
+                name=f"ring-stt-{metadata['audio_id'][:12]}",
+            )
+            _track_ring_audio_task(task)
         return {"accepted": True, "event": message}
 
     ring_session_id = payload["sessionId"]

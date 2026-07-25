@@ -4,6 +4,7 @@ import asyncio
 import io
 import time
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
@@ -68,7 +69,7 @@ def test_protocol_preserves_signed_twist_and_accepts_session_alias() -> None:
             "timestamp": 1720000000000,
             "payload": {
                 "session_id": "SC-001",
-                "sequence": 9,
+                "sequence": 0,
                 "twist": -0.72,
                 "tiltX": 0.63,
                 "accelMag": 0.18,
@@ -338,6 +339,34 @@ def test_ring_audio_ready_reads_without_moving_and_starts_local_pipeline(ring_cl
         time.sleep(0.01)
     assert server.session.transcript == "今天我很开心"
     assert server.session.emotion is not None
+
+
+def test_real_ring_waits_for_local_pipeline_before_motion_can_start(
+    ring_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, tmp_path = ring_client
+    source = tmp_path / "ring-runtime" / "capture.wav"
+    source.parent.mkdir()
+    source.write_bytes(_wav_bytes())
+    pipeline = AsyncMock()
+    monkeypatch.setattr(server, "_run_ring_audio_pipeline", pipeline)
+
+    result = asyncio.run(
+        server._ingest_ring_event(
+            {
+                "type": "audio_ready",
+                "timestamp": 2100,
+                "payload": {
+                    "sessionId": "SC-REAL-AUDIO",
+                    "wavPath": str(source.resolve()),
+                },
+            },
+            source="ring_runtime",
+        )
+    )
+
+    assert result["accepted"] is True
+    pipeline.assert_awaited_once_with(server.session.audio_id)
 
 
 def test_ring_status_is_disabled_by_default_and_session_route_is_recoverable(ring_client) -> None:

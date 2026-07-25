@@ -73,7 +73,10 @@ def _integer(
     maximum: int | None = None,
 ) -> int:
     number = _finite_number(value, name, minimum=minimum, maximum=maximum)
-    if not number.is_integer():
+    # max/min may return the integer boundary itself when the value equals it
+    # (for example sequence=0 with minimum=0). Normalize back to float before
+    # using float.is_integer().
+    if not float(number).is_integer():
         raise RingProtocolError(f"{name} must be an integer")
     return int(number)
 
