@@ -75,6 +75,20 @@ def test_health(client) -> None:
     assert test_client.get("/health").json() == {"ok": True}
 
 
+def test_local_frontend_dev_ports_are_allowed_by_cors(client) -> None:
+    test_client, _, _ = client
+    response = test_client.options(
+        "/api/mode/select",
+        headers={
+            "Origin": "http://127.0.0.1:5174",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5174"
+
+
 def test_local_emotion_analysis() -> None:
     result = analyze_emotion_local("I feel nervous and worried about tomorrow")
     assert result.emotion == Emotion.ANXIETY
