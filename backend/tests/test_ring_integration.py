@@ -16,6 +16,7 @@ import server
 from event_bus import EventBus
 from ring_integration import RingRuntimeManager, resolve_ring_ffmpeg_path
 from ring_protocol import RingEventGuard, RingProtocolError, normalize_ring_event
+from ring_runtime import RingRuntime
 from schemas import SessionState
 
 
@@ -245,6 +246,28 @@ def test_runtime_manager_owns_one_runtime_and_closes_cleanly() -> None:
         ("freeze", "SC-001"),
         "close",
     ]
+
+
+def test_runtime_monitor_reconnects_when_ring_returns_to_advertising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DisconnectedClient:
+        is_connected = False
+
+    runtime = object.__new__(RingRuntime)
+    runtime._closing = False
+    runtime.client = DisconnectedClient()
+    runtime.phase = "connected"
+    runtime.mode_hint = "unknown"
+    runtime.publisher = AsyncMock()
+    runtime.reconnect = AsyncMock()
+    monkeypatch.setattr("ring_runtime.asyncio.sleep", AsyncMock())
+
+    asyncio.run(runtime._monitor_connection())
+
+    runtime.reconnect.assert_awaited_once()
+    assert runtime.publisher.emit.await_args_list[0].args[0] == "error"
+    assert runtime.publisher.emit.await_args_list[0].args[1]["code"] == "BLE_DISCONNECTED"
 
 
 def test_ffmpeg_resolution_handles_stale_windows_path(

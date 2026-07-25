@@ -820,7 +820,30 @@ class RingRuntime:
                         "recommendedAction": "关闭手机蓝牙，靠近戒指并调用 reconnect()",
                     },
                 )
-                return
+                while not self._closing:
+                    try:
+                        # A disconnected ring returns to advertising mode. Reuse
+                        # the serialized reconnect path so the UI can recover
+                        # without restarting the whole FastAPI process.
+                        await self.reconnect()
+                        return
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as error:
+                        await self.publisher.emit(
+                            "error",
+                            {
+                                "code": "BLE_RECONNECT_FAILED",
+                                "phase": "reconnecting",
+                                "message": str(error),
+                                "recoverable": True,
+                                "recommendedAction": (
+                                    "Keep the ring advertising near the computer; "
+                                    "SoundClay will retry automatically."
+                                ),
+                            },
+                        )
+                        await asyncio.sleep(2.0)
         except asyncio.CancelledError:
             raise
 
@@ -839,4 +862,3 @@ class RingRuntime:
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
         await self.close()
-
