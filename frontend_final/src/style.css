@@ -452,7 +452,13 @@ input:focus-visible {
 .result-actions {
   display: flex;
   justify-content: center;
-  gap: 20px;
+  gap: 32px;
+}
+
+.result-action {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
 }
 
 .result-actions .icon-button {

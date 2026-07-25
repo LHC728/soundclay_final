@@ -427,10 +427,15 @@ function render() {
   `
   controls.innerHTML = `
     <div class="result-actions">
-      <button class="icon-button" id="share-button" aria-label="分享作品">${icons.share}</button>
-      <button class="icon-button" id="restart-button" aria-label="重新开始">${icons.restart}</button>
+      <div class="result-action">
+        <button class="icon-button" id="share-button" aria-label="分享作品">${icons.share}</button>
+        <span class="tiny-label">分享</span>
+      </div>
+      <div class="result-action">
+        <button class="icon-button" id="restart-button" aria-label="重新开始">${icons.restart}</button>
+        <span class="tiny-label">重来</span>
+      </div>
     </div>
-    <div class="tiny-label">分享 · 重来</div>
   `
   document.querySelector('#share-button').addEventListener('click', shareWork)
   document.querySelector('#restart-button').addEventListener('click', restart)
