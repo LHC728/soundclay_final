@@ -452,6 +452,7 @@ export function createSculpture(container) {
   let sphereTarget = 0
   let burstAmount = 0
   let burstTarget = 0
+  let burstExpanded = false
 
   // -1 = 左侧 / 小声 / 远处小球；1 = 右侧 / 大声 / 近处大球。
   let sizeControl = 0
@@ -549,6 +550,7 @@ export function createSculpture(container) {
   function burst(strength = 1) {
     if (frozen || currentState !== 'sculpt') return null
     sphereTarget = 1
+    burstExpanded = true
 
     // 快速挥动只向外爆散，不自动聚合或回弹。
     // 每次挥动会在已有结果上继续增加爆散距离，形成个性化作品。
@@ -559,6 +561,17 @@ export function createSculpture(container) {
     )
     burstImpact = Math.max(burstImpact, 0.72 + amount * 0.28)
     return 'explode'
+  }
+
+  function toggleBurst(strength = 1) {
+    if (frozen || currentState !== 'sculpt') return null
+    if (!burstExpanded) return burst(strength)
+
+    burstExpanded = false
+    burstTarget = 0
+    burstImpact = 0
+    sphereTarget = 1
+    return 'restore'
   }
 
   function depthFromSize(value) {
@@ -711,6 +724,7 @@ export function createSculpture(container) {
     setEnergy,
     setOrientation,
     burst,
+    toggleBurst,
     setSize,
     nudgeSize,
     push,
@@ -759,6 +773,7 @@ export function createSculpture(container) {
       sphereTarget = 0
       burstAmount = 0
       burstTarget = 0
+      burstExpanded = false
       sizeControl = 0
       sizeTarget = 0
       depthCurrent.set(0, 0, 0)

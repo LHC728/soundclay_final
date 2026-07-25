@@ -572,12 +572,13 @@ function demoSphere() {
 function triggerBurst(strength = 1, { syncAbleton = false } = {}) {
   if (state !== 'sculpt' || ringFrozen) return
   const normalized = Math.min(1.35, Math.max(0.16, Number(strength) || 1))
-  sculpture.burst(normalized)
+  const burstState = sculpture.toggleBurst(normalized)
   finalMotion.burstCount = Number(finalMotion.burstCount || 0) + 1
   finalMotion.lastBurstStrength = normalized
+  finalMotion.burstExpanded = burstState === 'explode'
   if (syncAbleton) syncAbletonMotion('burst', Math.min(1, normalized))
   audio.setMorph({ energy: Math.min(1, 0.72 + normalized * 0.2) })
-  showToast('粒子爆散已保留')
+  showToast(burstState === 'restore' ? '粒子已聚合回球体' : '粒子爆散已保留')
 }
 
 function applySizeControl(value, { notify = false, syncAbleton = false } = {}) {
