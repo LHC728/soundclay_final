@@ -18,6 +18,8 @@ _MIDI_CC_TIMBRE = 20
 _MIDI_CC_MAIN_GAIN = 21
 _MIDI_NOTE_BURST = 70
 _MIDI_SCENE_NOTE_HOLD_SECONDS = 0.3
+_MIDI_TIMBRE_VALUES = (16, 64, 112)
+_MIDI_TWIST_DEAD_ZONE = 0.25
 _MIDI_SCENE_NOTES = {
     ("joy", "express"): 60,
     ("joy", "soothe"): 61,
@@ -36,6 +38,8 @@ _midi_output: Any | None = None
 _midi_output_name: str | None = None
 _midi_last_error: str | None = None
 _midi_last_cc: dict[int, tuple[int, float]] = {}
+_midi_timbre_index = 1
+_midi_twist_zone = 0
 
 
 def _enabled() -> bool:
@@ -127,7 +131,12 @@ def status() -> dict[str, Any]:
             "connected": bool(_midi_output and not getattr(_midi_output, "closed", False)),
             "lastError": _midi_last_error or discovery_error,
             "controls": {
-                "timbreWheel": {"type": "cc", "number": _MIDI_CC_TIMBRE},
+                "timbreWheel": {
+                    "type": "cc",
+                    "number": _MIDI_CC_TIMBRE,
+                    "mode": "three-state-latched",
+                    "values": list(_MIDI_TIMBRE_VALUES),
+                },
                 "mainGain": {"type": "cc", "number": _MIDI_CC_MAIN_GAIN},
                 "burstClip": {"type": "note", "number": _MIDI_NOTE_BURST},
             },
@@ -140,12 +149,14 @@ def status() -> dict[str, Any]:
 
 
 def close_midi_output() -> None:
-    global _midi_output, _midi_output_name
+    global _midi_output, _midi_output_name, _midi_timbre_index, _midi_twist_zone
     with _midi_lock:
         output = _midi_output
         _midi_output = None
         _midi_output_name = None
         _midi_last_cc.clear()
+        _midi_timbre_index = 1
+        _midi_twist_zone = 0
         if output is not None:
             try:
                 output.close()
@@ -215,6 +226,34 @@ def send_midi_cc(control: int, normalized_value: float) -> bool:
     return sent
 
 
+def send_timbre_twist(normalized_value: float) -> bool:
+    """Cycle among three timbres and keep the selection after the wrist returns.
+
+    The ring and browser both report a centered value when a twist finishes.
+    Center therefore only re-arms the next gesture; it must not write CC20=64.
+    """
+    global _midi_timbre_index, _midi_twist_zone
+
+    value = float(normalized_value)
+    if not math.isfinite(value):
+        raise ValueError("twist value must be finite")
+    signed = max(-1.0, min(1.0, value * 2.0 - 1.0))
+
+    with _midi_lock:
+        if abs(signed) <= _MIDI_TWIST_DEAD_ZONE:
+            _midi_twist_zone = 0
+            return _midi_enabled()
+
+        direction = -1 if signed < 0 else 1
+        if _midi_twist_zone == direction:
+            return _midi_enabled()
+
+        _midi_twist_zone = direction
+        _midi_timbre_index = (_midi_timbre_index + direction) % len(_MIDI_TIMBRE_VALUES)
+        midi_value = _MIDI_TIMBRE_VALUES[_midi_timbre_index]
+        return send_midi_cc(_MIDI_CC_TIMBRE, midi_value / 127.0)
+
+
 def send_midi_note(note: int, velocity: int = 127, *, hold_seconds: float = 0.0) -> bool:
     if not 0 <= note <= 127 or not 0 <= velocity <= 127:
         raise ValueError("MIDI note and velocity must be between 0 and 127")
@@ -280,7 +319,7 @@ def send_control(control: str, value: str | int | float) -> bool:
     """Send one optional MIDI/OSC control without breaking the P0 flow."""
     midi_sent = False
     if control == "twist":
-        midi_sent = send_midi_cc(_MIDI_CC_TIMBRE, float(value))
+        midi_sent = send_timbre_twist(float(value))
     elif control == "energy":
         energy = max(0.0, min(1.0, float(value)))
         floor = _midi_gain_floor()

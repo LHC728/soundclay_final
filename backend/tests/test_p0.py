@@ -705,7 +705,7 @@ def test_ableton_midi_reuses_saved_live_set_mapping(monkeypatch) -> None:
     ableton_adapter.close_midi_output()
 
     assert ableton_adapter.send_scene("joy", "express") is True
-    ableton_adapter.send_motion("twist", {"value": 0.5})
+    ableton_adapter.send_motion("twist", {"value": 0.95})
     ableton_adapter.send_motion("finger", {"value": -0.5})
     ableton_adapter.send_motion("burst", {"strength": 0.8})
 
@@ -714,12 +714,48 @@ def test_ableton_midi_reuses_saved_live_set_mapping(monkeypatch) -> None:
         ("note_off", 60),
     ]
     cc_messages = [message for message in messages if message.type == "control_change"]
-    assert [(message.control, message.value) for message in cc_messages] == [(20, 64), (21, 70)]
+    assert [(message.control, message.value) for message in cc_messages] == [(20, 112), (21, 70)]
     assert [(message.type, getattr(message, "note", None)) for message in messages[-2:]] == [
         ("note_on", 70),
         ("note_off", 70),
     ]
     assert all(message.channel == 0 for message in messages)
+    ableton_adapter.close_midi_output()
+
+
+def test_ableton_timbre_twist_cycles_three_steps_without_center_reset(monkeypatch) -> None:
+    messages = []
+
+    class FakePort:
+        closed = False
+
+        def send(self, message):
+            messages.append(message)
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setenv("ABLETON_OSC_ENABLED", "false")
+    monkeypatch.setenv("ABLETON_MIDI_ENABLED", "true")
+    monkeypatch.setenv("ABLETON_MIDI_PORT", "SoundClay MIDI")
+    monkeypatch.setattr(ableton_adapter.mido, "get_output_names", lambda: ["SoundClay MIDI 2"])
+    monkeypatch.setattr(ableton_adapter.mido, "open_output", lambda _name: FakePort())
+    ticks = iter([1.0, 2.0, 3.0])
+    monkeypatch.setattr(ableton_adapter.time, "monotonic", lambda: next(ticks))
+    ableton_adapter.close_midi_output()
+
+    # Right twist selects the third timbre. Holding it and returning to center
+    # do not emit another CC; center only prepares the next gesture.
+    ableton_adapter.send_motion("twist", {"value": 0.95})
+    ableton_adapter.send_motion("twist", {"value": 0.90})
+    ableton_adapter.send_motion("twist", {"value": 0.50})
+    assert [message.value for message in messages] == [112]
+
+    # Two more right twists visit the first and middle timbres.
+    ableton_adapter.send_motion("twist", {"value": 0.95})
+    ableton_adapter.send_motion("twist", {"value": 0.50})
+    ableton_adapter.send_motion("twist", {"value": 0.95})
+    assert [message.value for message in messages] == [112, 16, 64]
     ableton_adapter.close_midi_output()
 
 
@@ -758,6 +794,7 @@ def test_ableton_stop_sends_midi_clock_stop(monkeypatch) -> None:
 
     monkeypatch.setenv("ABLETON_OSC_ENABLED", "false")
     monkeypatch.setenv("ABLETON_MIDI_ENABLED", "true")
+    monkeypatch.setenv("ABLETON_MIDI_PORT", "SoundClay MIDI")
     monkeypatch.setattr(ableton_adapter.mido, "get_output_names", lambda: ["SoundClay MIDI 2"])
     monkeypatch.setattr(ableton_adapter.mido, "open_output", lambda _name: FakePort())
     ableton_adapter.close_midi_output()
