@@ -19,13 +19,14 @@ def test_ensure_soundclay_sources_creates_missing_capture_inputs(monkeypatch) ->
     monkeypatch.setattr(obs_adapter, "_request", fake_request)
     result = asyncio.run(obs_adapter.ensure_soundclay_sources())
 
-    assert result["created"] == ["SoundClay 屏幕", "SoundClay 桌面音频"]
-    assert result["audioSource"] == "SoundClay 桌面音频"
+    assert result["created"] == ["SoundClay 屏幕", "SoundClay Ableton 音频"]
+    assert result["audioSource"] == "SoundClay Ableton 音频"
     create_calls = [data for kind, data in calls if kind == "CreateInput"]
     assert [data["inputKind"] for data in create_calls] == [
         "monitor_capture",
-        "wasapi_output_capture",
+        "wasapi_process_output_capture",
     ]
+    assert create_calls[1]["inputSettings"]["window"] == "::Ableton Live 12 Suite.exe"
 
 
 def test_ensure_soundclay_sources_reuses_desktop_audio_and_mutes_microphone(
@@ -48,10 +49,7 @@ def test_ensure_soundclay_sources_reuses_desktop_audio_and_mutes_microphone(
                         "inputName": "麦克风/Aux",
                         "unversionedInputKind": "wasapi_input_capture",
                     },
-                    {
-                        "inputName": "SoundClay 屏幕",
-                        "unversionedInputKind": "monitor_capture",
-                    },
+                    {"inputName": "窗口采集", "unversionedInputKind": "window_capture"},
                     {
                         "inputName": "SoundClay 桌面音频",
                         "unversionedInputKind": "wasapi_output_capture",
@@ -63,11 +61,20 @@ def test_ensure_soundclay_sources_reuses_desktop_audio_and_mutes_microphone(
     monkeypatch.setattr(obs_adapter, "_request", fake_request)
     result = asyncio.run(obs_adapter.ensure_soundclay_sources())
 
-    assert result["created"] == []
+    assert result["created"] == ["SoundClay Ableton 音频"]
     assert result["removed"] == ["SoundClay 桌面音频"]
-    assert result["audioSource"] == "桌面音频"
-    assert result["mutedInputs"] == ["麦克风/Aux"]
+    assert result["videoSource"] == "窗口采集"
+    assert result["audioSource"] == "SoundClay Ableton 音频"
+    assert result["mutedInputs"] == ["桌面音频", "麦克风/Aux"]
     assert ("RemoveInput", {"inputName": "SoundClay 桌面音频"}) in calls
+    assert (
+        "SetInputSettings",
+        {
+            "inputName": "窗口采集",
+            "inputSettings": {"capture_audio": False},
+            "overlay": True,
+        },
+    ) in calls
     assert (
         "SetInputMute",
         {"inputName": "麦克风/Aux", "inputMuted": True},

@@ -209,13 +209,13 @@ OBS 不是核心流程的硬依赖。未启动 OBS 时，录音、动作雕刻�
 
 1. 打开“工具 → WebSocket 服务器设置”，启用端口 `4455`，本地原型关闭身份认证。
 2. 在“设置 → 输出 → 录制”中选择 MP4（或 Hybrid MP4）格式和可写入目录。
-3. 保持 OBS 主窗口打开，在仓库根目录执行以下命令。脚本会保留现有场景，只补充屏幕采集、复用已有桌面音频并静音麦克风：
+3. 保持 OBS 主窗口和 Ableton Live 打开，在仓库根目录执行以下命令。脚本会保留现有窗口/屏幕采集，关闭浏览器窗口音频、桌面音频和麦克风，只创建 Ableton 应用音频捕获：
 
 ```powershell
 .\.venv311\Scripts\python.exe backend\configure_obs.py
 ```
 
-重复运行此命令是安全的，不会重复创建源。若 OBS 已有全局桌面音频，脚本会优先复用它以避免声音叠加。
+重复运行此命令是安全的，不会重复创建源。默认绑定 `Ableton Live 12 Suite.exe`；使用其他版本时可在 `backend/.env` 设置 `OBS_ABLETON_EXECUTABLE`。
 
 选择模式进入雕刻页后，前端调用 `POST /api/obs/recording/start`；点击凝固时调用 `POST /api/obs/recording/stop`。OBS 返回的 MP4 副本会写入：
 

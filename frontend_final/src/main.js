@@ -24,7 +24,7 @@ app.innerHTML = `
 
       <div class="copy" id="copy"></div>
       <div class="controls" id="controls"></div>
-      <div class="toast" id="toast">已留下</div>
+      <div class="toast" id="toast" aria-live="polite"></div>
 
       <div class="progress-dots" aria-hidden="true">
         <span class="progress-dot" data-step="0"></span>
@@ -283,7 +283,7 @@ function handleSocketEvent(message) {
       break
     case 'error':
       updateConnectionStatus(payload.message || '戒指连接异常', 'error')
-      showToast(payload.recommendedAction || payload.message || '戒指连接异常')
+      showErrorToast(payload.recommendedAction || payload.message || '戒指连接异常')
       break
     default:
       break
@@ -552,11 +552,11 @@ function enterSculpt() {
     })
     .catch(() => {
       obsRecordingStarted = false
-      showToast('OBS 未连接 · 继续本地创作')
+      showErrorToast('OBS 未连接 · 继续本地创作')
       return false
     })
   materialRequest = triggerAbletonScene().catch((error) => {
-    showToast(error instanceof Error ? error.message : '无法触发 Ableton Live')
+    showErrorToast(error instanceof Error ? error.message : '无法触发 Ableton Live')
     return null
   })
   return materialRequest
@@ -584,6 +584,12 @@ function syncAbletonMotion(type, value, throttleMs = 0) {
 }
 
 function showToast(message = '已留下') {
+  // Successful gesture/action feedback stays visual-only. Keeping this
+  // function as a no-op avoids changing every interaction call site.
+  void message
+}
+
+function showErrorToast(message) {
   clearTimeout(toastTimer)
   toast.textContent = message
   toast.classList.add('is-visible')
@@ -684,13 +690,14 @@ function completeCreation({ message = '作品已凝固', burst = false } = {}) {
     sculpture.setTwist(0)
     sculpture.freeze(true)
     audio.stopPlayback()
+    const obsStopPromise = stopObsForCreation()
     setState('result')
     showToast(message)
     isCompleting = false
     void stopAbletonPlayback().catch((error) => {
-      showToast(error instanceof Error ? error.message : '无法停止 Ableton Live')
+      showErrorToast(error instanceof Error ? error.message : '无法停止 Ableton Live')
     })
-    savePromise = saveCurrentWork()
+    savePromise = saveCurrentWork(obsStopPromise)
   }
 
   if (burst) completionTimer = window.setTimeout(finalize, 260)
@@ -717,7 +724,7 @@ async function togglePlayback() {
     await triggerAbletonScene()
     showToast('已在 Ableton Live 中播放')
   } catch (error) {
-    showToast(error instanceof Error ? error.message : '无法触发 Ableton Live')
+    showErrorToast(error instanceof Error ? error.message : '无法触发 Ableton Live')
   }
 }
 
@@ -730,21 +737,24 @@ function blobToDataUrl(blob) {
   })
 }
 
-async function saveCurrentWork() {
+async function stopObsForCreation() {
+  await obsStartPromise
+  if (!obsRecordingStarted) return false
+  try {
+    await stopObsRecording()
+    return true
+  } catch {
+    showErrorToast('OBS 录像未保存 · 作品仍会生成')
+    return false
+  } finally {
+    obsRecordingStarted = false
+  }
+}
+
+async function saveCurrentWork(obsStopPromise = Promise.resolve(false)) {
   try {
     await materialRequest
-    await obsStartPromise
-    let useObsRecording = false
-    if (obsRecordingStarted) {
-      try {
-        await stopObsRecording()
-        useObsRecording = true
-      } catch {
-        showToast('OBS 录像未保存 · 作品仍会生成')
-      } finally {
-        obsRecordingStarted = false
-      }
-    }
+    const useObsRecording = await obsStopPromise
 
     const screenshotBlob = await sculpture.captureBlob()
     const processedAudioBlob = audio.hasRecording ? await audio.exportProcessedWav() : null
@@ -783,7 +793,7 @@ async function saveCurrentWork() {
         publicWork = await createPublicWork(publicPayload)
       } catch (error) {
         if (!useObsRecording) throw error
-        showToast('OBS 视频不可用 · 已保存扫码作品')
+        showErrorToast('OBS 视频不可用 · 已保存扫码作品')
         publicWork = await createPublicWork({ ...publicPayload, use_obs_recording: false })
       }
       url = shareUrl(publicWork.workId)
@@ -801,7 +811,7 @@ async function saveCurrentWork() {
     if (savedWork.id) showToast(`作品已保存 · ${savedWork.id}`)
     return savedWork
   } catch (error) {
-    showToast(error instanceof Error ? error.message : '本地保存失败')
+    showErrorToast(error instanceof Error ? error.message : '本地保存失败')
     return null
   }
 }
@@ -896,7 +906,7 @@ function openShareSheet() {
       await navigator.clipboard.writeText(savedWork.url)
       showToast('链接已复制')
     } catch {
-      showToast('无法复制链接')
+      showErrorToast('无法复制链接')
     }
   })
   sheet.querySelector('[data-action="native"]').addEventListener('click', async () => {
@@ -908,7 +918,7 @@ function openShareSheet() {
         showToast('链接已复制')
       }
     } catch (error) {
-      if (error?.name !== 'AbortError') showToast('分享失败，请复制链接')
+      if (error?.name !== 'AbortError') showErrorToast('分享失败，请复制链接')
     }
   })
   document.body.append(sheet)
