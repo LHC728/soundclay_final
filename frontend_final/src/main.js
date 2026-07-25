@@ -67,6 +67,7 @@ let savedWork = null
 let finalMotion = {}
 const lastAbletonSync = { twist: 0, finger: 0 }
 const heldTwistKeys = new Set()
+const SIZE_LEVELS = [-1, 0, 1]
 let socket = null
 let reconnectTimer = 0
 let reconnectDelay = 800
@@ -584,25 +585,27 @@ function triggerBurst(strength = 1, { syncAbleton = false } = {}) {
 function applySizeControl(value, { notify = false, syncAbleton = false } = {}) {
   if (state !== 'sculpt' || ringFrozen) return 0
   const normalized = Math.min(1, Math.max(-1, Number(value) || 0))
-  localSizeDemo = normalized
-  finalMotion.size = normalized
-  sculpture.setSize(normalized)
+  const level = normalized < -0.34 ? -1 : normalized > 0.34 ? 1 : 0
+  localSizeDemo = level
+  finalMotion.size = level
+  sculpture.setSize(level)
 
   // 左侧声音更小、球体更远更小；右侧声音更大、球体更近更大。
-  const loudness = (normalized + 1) * 0.5
+  const loudness = (level + 1) * 0.5
   audio.setMorph({ energy: 0.08 + loudness * 0.92 })
-  if (syncAbleton) syncAbletonMotion('finger', normalized, 35)
+  if (syncAbleton) syncAbletonMotion('finger', level, 35)
 
   if (notify) {
-    if (normalized < -0.34) showToast('小球 · 小声')
-    else if (normalized > 0.34) showToast('大球 · 大声')
-    else showToast('标准大小')
+    if (level < 0) showToast('小球 · 小声')
+    else if (level > 0) showToast('大球 · 大声')
+    else showToast('中球 · 中声')
   }
-  return normalized
+  return level
 }
 
 function demoSize() {
-  const next = localSizeDemo > 0.45 ? -1 : 1
+  const currentIndex = SIZE_LEVELS.indexOf(localSizeDemo)
+  const next = SIZE_LEVELS[(currentIndex + 1) % SIZE_LEVELS.length]
   applySizeControl(next, { notify: true, syncAbleton: true })
 }
 

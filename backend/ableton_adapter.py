@@ -139,7 +139,12 @@ def status() -> dict[str, Any]:
                     "mode": "three-state-latched",
                     "values": list(_MIDI_TIMBRE_VALUES),
                 },
-                "mainGain": {"type": "cc", "number": _MIDI_CC_MAIN_GAIN},
+                "mainGain": {
+                    "type": "cc",
+                    "number": _MIDI_CC_MAIN_GAIN,
+                    "mode": "three-level",
+                    "values": [0, 64, 127],
+                },
                 "burstClip": {
                     "type": "note",
                     "number": _MIDI_NOTE_BURST,
@@ -339,8 +344,8 @@ def send_control(control: str, value: str | int | float) -> bool:
         midi_sent = send_timbre_twist(float(value))
     elif control == "energy":
         energy = max(0.0, min(1.0, float(value)))
-        floor = _midi_gain_floor()
-        midi_sent = send_midi_cc(_MIDI_CC_MAIN_GAIN, floor + energy * (1.0 - floor))
+        gain_level = 0.0 if energy < 1.0 / 3.0 else 1.0 if energy > 2.0 / 3.0 else 0.5
+        midi_sent = send_midi_cc(_MIDI_CC_MAIN_GAIN, gain_level)
     elif control == "burst":
         strength = max(0.0, min(1.0, float(value)))
         midi_sent = send_burst_hits(max(1, round(strength * 127)))
