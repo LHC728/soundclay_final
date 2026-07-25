@@ -125,11 +125,31 @@ class RingRecordingService:
 
             recovered = False
             record_time = int(time.time())
+            loop = asyncio.get_running_loop()
+            receive_deadline = loop.time() + timeout
             try:
-                file_index, raw_audio = await sdk.receive_auto_audio_file(
-                    self.client,
-                    timeout_s=timeout,
-                )
+                while True:
+                    remaining = receive_deadline - loop.time()
+                    if remaining <= 0:
+                        raise sdk.TimeoutError("Timed out waiting for a new recording")
+                    file_index, raw_audio = await sdk.receive_auto_audio_file(
+                        self.client,
+                        timeout_s=remaining,
+                    )
+                    if file_index >= baseline_count:
+                        break
+                    await self.publisher.emit(
+                        "status",
+                        {
+                            "sessionId": session_id,
+                            "ringConnected": self.client.is_connected,
+                            "phase": "recording_armed",
+                            "modeHint": "recording_expected",
+                            "audioCountBefore": baseline_count,
+                            "ignoredFileIndex": file_index,
+                            "message": "Ignored a recording queued before this session",
+                        },
+                    )
             except (sdk.TimeoutError, sdk.ProtocolError) as auto_error:
                 await self.publisher.emit(
                     "error",
@@ -377,4 +397,3 @@ class RingRecordingService:
             speech_activity_ratio=rounded_speech_activity_ratio,
             warnings=warnings,
         )
-

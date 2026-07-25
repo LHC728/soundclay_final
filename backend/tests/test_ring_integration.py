@@ -14,8 +14,11 @@ from fastapi.testclient import TestClient
 import emotion_adapter
 import server
 from event_bus import EventBus
+from event_contract import EventPublisher
 from ring_integration import RingRuntimeManager, resolve_ring_ffmpeg_path
 from ring_protocol import RingEventGuard, RingProtocolError, normalize_ring_event
+from ring_config import RingConfig
+from ring_recording_service import AudioReady, RingRecordingService
 from ring_runtime import RingRuntime
 from schemas import SessionState
 
@@ -268,6 +271,53 @@ def test_runtime_monitor_reconnects_when_ring_returns_to_advertising(
     runtime.reconnect.assert_awaited_once()
     assert runtime.publisher.emit.await_args_list[0].args[0] == "error"
     assert runtime.publisher.emit.await_args_list[0].args[1]["code"] == "BLE_DISCONNECTED"
+
+
+def test_recording_ignores_auto_audio_queued_before_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class ConnectedClient:
+        is_connected = True
+
+    async def scenario() -> None:
+        publisher = EventPublisher(tmp_path)
+        service = RingRecordingService(
+            ConnectedClient(),
+            RingConfig(session_root=tmp_path, recording_timeout_s=5),
+            publisher,
+            asyncio.Lock(),
+        )
+        monkeypatch.setattr(
+            "ring_recording_service.sdk.get_audio_file_count",
+            AsyncMock(return_value=91),
+        )
+        receive = AsyncMock(side_effect=[(90, b"stale"), (91, b"new")])
+        monkeypatch.setattr(
+            "ring_recording_service.sdk.receive_auto_audio_file", receive
+        )
+        ready = AudioReady(
+            session_id="fresh-session",
+            file_index=91,
+            raw_path=tmp_path / "ring_raw.bin",
+            wav_path=tmp_path / "original.wav",
+            duration_ms=3200,
+            record_time=1,
+            recovered=False,
+        )
+        save = AsyncMock(return_value=ready)
+        monkeypatch.setattr(service, "_save_and_validate", save)
+
+        try:
+            result = await service.arm_recording("fresh-session")
+        finally:
+            await publisher.close()
+
+        assert result == ready
+        assert receive.await_count == 2
+        assert save.await_args.kwargs["file_index"] == 91
+        assert save.await_args.kwargs["raw_audio"] == b"new"
+
+    asyncio.run(scenario())
 
 
 def test_ffmpeg_resolution_handles_stale_windows_path(
