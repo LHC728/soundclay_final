@@ -51,6 +51,7 @@ const audio = new SoundClayAudio({
 const STATE_INDEX = { idle: 0, recording: 0, mode: 1, sculpt: 2, result: 3 }
 let state = 'idle'
 let mode = 0.5
+let modeSelectionCommitted = false
 let recordingStartedAt = 0
 let recordingTimer = 0
 let recordingTimeout = 0
@@ -91,6 +92,7 @@ function setActiveDot() {
 
 function setState(nextState) {
   state = nextState
+  if (nextState === 'mode') modeSelectionCommitted = false
   root.dataset.state = state
   sculpture.setState(state)
   setActiveDot()
@@ -366,12 +368,20 @@ function render() {
     `
 
     const slider = document.querySelector('#mode-slider')
+    const commitSliderSelection = () => {
+      const sliderPosition = Number(slider.value) / 100
+      // 松手时吸附到左右模式，确保一次明确的滑动只触发一次场景音符。
+      setMode(sliderPosition < 0.5 ? 1 : 0)
+      enterSculpt()
+    }
     slider.addEventListener('input', () => {
       const sliderPosition = Number(slider.value) / 100
       setMode(1 - sliderPosition)
 
-      if (sliderPosition === 0 || sliderPosition === 1) enterSculpt()
+      if (sliderPosition <= 0.01 || sliderPosition >= 0.99) enterSculpt()
     })
+    slider.addEventListener('change', commitSliderSelection)
+    slider.addEventListener('pointerup', commitSliderSelection)
     return
   }
 
@@ -483,6 +493,8 @@ function setMode(value) {
 }
 
 function enterSculpt() {
+  if (modeSelectionCommitted) return materialRequest
+  modeSelectionCommitted = true
   nodes = []
   savedWork = null
   finalMotion = { burstCount: 0, frozen: false, size: 0, twist: 0 }
@@ -502,6 +514,7 @@ function enterSculpt() {
     showToast(error instanceof Error ? error.message : '无法触发 Ableton Live')
     return null
   })
+  return materialRequest
 }
 
 async function triggerAbletonScene() {
@@ -848,6 +861,14 @@ interactionLayer.addEventListener('pointermove', (event) => {
 
 function finishPointer(event) {
   if (!pointer || pointer.id !== event.pointerId) return
+
+  if (state === 'mode') {
+    // 页面级拖动和原生 range 滑块使用同一条提交路径。
+    setMode(mode >= 0.5 ? 1 : 0)
+    enterSculpt()
+    pointer = null
+    return
+  }
 
   if (state === 'sculpt') {
     sculpture.setTwist(0)
