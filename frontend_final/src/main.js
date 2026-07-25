@@ -1063,8 +1063,8 @@ interactionLayer.addEventListener('pointercancel', finishPointer)
 
 function applyKeyboardTwist() {
   if (state !== 'sculpt' || ringFrozen) return
-  const left = heldTwistKeys.has('ArrowLeft') || heldTwistKeys.has('KeyA')
-  const right = heldTwistKeys.has('ArrowRight') || heldTwistKeys.has('KeyD')
+  const left = heldTwistKeys.has('KeyA')
+  const right = heldTwistKeys.has('KeyD')
   const twist = left === right ? 0 : left ? -0.88 : 0.88
   sculpture.setTwist(twist, true)
   finalMotion.twist = twist
@@ -1078,7 +1078,25 @@ window.addEventListener('keydown', (event) => {
     return
   }
 
-  if (['ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD'].includes(event.code) && state === 'sculpt') {
+  if (!event.repeat && event.code === 'ArrowLeft' && state === 'sculpt') {
+    event.preventDefault()
+    demoSphere()
+    return
+  }
+
+  if (!event.repeat && event.code === 'ArrowDown' && state === 'sculpt') {
+    event.preventDefault()
+    triggerBurst(1, { syncAbleton: true })
+    return
+  }
+
+  if (!event.repeat && event.code === 'ArrowRight' && state === 'sculpt') {
+    event.preventDefault()
+    demoSize()
+    return
+  }
+
+  if (['KeyA', 'KeyD'].includes(event.code) && state === 'sculpt') {
     event.preventDefault()
     heldTwistKeys.add(event.code)
     applyKeyboardTwist()
@@ -1109,15 +1127,26 @@ window.addEventListener('keydown', (event) => {
     return
   }
 
-  if (event.key.toLowerCase() === 'r' && state === 'sculpt') {
-    nodes.pop()
-    showToast('已撤回')
-    render()
+  if (!event.repeat && ['Digit0', 'Numpad0'].includes(event.code) && state === 'sculpt') {
+    event.preventDefault()
+    finishCreation()
+    return
+  }
+
+  if (!event.repeat && event.code === 'KeyS' && state === 'result') {
+    event.preventDefault()
+    void shareWork()
+    return
+  }
+
+  if (!event.repeat && event.code === 'KeyR' && ['sculpt', 'result'].includes(state)) {
+    event.preventDefault()
+    restart()
   }
 })
 
 window.addEventListener('keyup', (event) => {
-  if (!['ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD'].includes(event.code)) return
+  if (!['KeyA', 'KeyD'].includes(event.code)) return
   heldTwistKeys.delete(event.code)
   applyKeyboardTwist()
 })
