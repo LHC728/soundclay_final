@@ -110,6 +110,7 @@ def status() -> dict[str, Any]:
         "addresses": {
             "mode": "/soundclay/mode",
             "twist": "/soundclay/twist",
+            "energy": "/soundclay/energy",
             "filter": "/soundclay/filter",
             "burst": "/soundclay/burst",
             "freeze": "/soundclay/freeze",
@@ -299,9 +300,10 @@ def send_motion(event_type: str, payload: dict[str, Any]) -> None:
     if event_type == "twist":
         twist = float(payload["value"])
         send_control("twist", twist)
-        if "energy" in payload:
-            send_control("energy", float(payload["energy"]))
         send_control("filter", 700.0 + twist**1.7 * 15_300.0)
+    elif event_type == "finger":
+        finger = max(-1.0, min(1.0, float(payload["value"])))
+        send_control("energy", (finger + 1.0) / 2.0)
     elif event_type == "burst":
         send_control("burst", float(payload["strength"]))
     elif event_type == "freeze":

@@ -725,6 +725,16 @@ def _motion_event(event_type: str, payload: dict, timestamp: int | None = None) 
         value = _clamped_number(float(payload.get("value", 0.0)), "value")
         session.motion["twist"] = value
         clean_payload["value"] = value
+    elif event_type == "finger":
+        raw_value = float(payload.get("value", payload.get("x", 0.0)))
+        if not math.isfinite(raw_value):
+            raise HTTPException(status_code=422, detail="value must be finite")
+        value = max(-1.0, min(1.0, raw_value))
+        gain = (value + 1.0) / 2.0
+        session.motion["finger"] = value
+        session.motion["size"] = value
+        session.motion["gain"] = gain
+        clean_payload.update({"value": value, "gain": gain})
     elif event_type == "burst":
         strength = _clamped_number(
             float(payload.get("strength", 0.0)), "strength"
@@ -942,7 +952,7 @@ async def _ingest_ring_event(raw: dict, *, source: str) -> dict:
         # Ableton's established route remains 0..1; only this adapter converts.
         send_ableton_motion(
             "twist",
-            {"value": (twist + 1.0) / 2.0, "energy": payload["accelMag"]},
+            {"value": (twist + 1.0) / 2.0},
         )
         message = event("imu", {**payload, "source": source}, timestamp=timestamp)
     else:
@@ -990,6 +1000,32 @@ async def mock_burst(strength: float = Query(default=0.9)) -> dict:
     message = _motion_event("burst", {"strength": strength})
     await bus.broadcast(message)
     return message
+
+
+@app.post("/api/mock/finger")
+async def mock_finger(value: float = Query(default=0.0)) -> dict:
+    message = _motion_event("finger", {"value": value})
+    await bus.broadcast(message)
+    return message
+
+
+@app.post("/api/ableton/motion/{motion_type}")
+async def ableton_motion(motion_type: str, value: float = Query(...)) -> dict:
+    """Drive Ableton from the frontend's no-ring interaction simulator."""
+    if not math.isfinite(value):
+        raise HTTPException(status_code=422, detail="value must be finite")
+    if motion_type == "twist":
+        normalized = max(0.0, min(1.0, (value + 1.0) / 2.0))
+        send_ableton_motion("twist", {"value": normalized})
+    elif motion_type == "finger":
+        normalized = max(-1.0, min(1.0, value))
+        send_ableton_motion("finger", {"value": normalized})
+    elif motion_type == "burst":
+        normalized = max(0.0, min(1.0, value))
+        send_ableton_motion("burst", {"strength": normalized})
+    else:
+        raise HTTPException(status_code=422, detail=f"unsupported Ableton motion: {motion_type}")
+    return {"ok": True, "type": motion_type, "value": normalized}
 
 
 @app.post("/api/mock/freeze")
@@ -1148,19 +1184,24 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                 has_ring_session = bool(payload.get("sessionId") or payload.get("session_id"))
                 if event_type in {"status", "imu", "error"} or (
-                    event_type in {"burst", "freeze"} and has_ring_session
+                    event_type in {"finger", "burst", "freeze"} and has_ring_session
                 ):
                     await _ingest_ring_event(incoming, source="websocket")
                     continue
 
                 aliases = {
                     "imu/twist": "twist",
+                    "imu/finger": "finger",
+                    "finger_move": "finger",
+                    "size": "finger",
+                    "scale": "finger",
+                    "depth": "finger",
                     "imu/burst": "burst",
                     "imu/freeze": "freeze",
                     "ui/color": "color",
                 }
                 event_type = aliases.get(event_type, event_type)
-                if event_type not in {"twist", "burst", "freeze", "color"}:
+                if event_type not in {"twist", "finger", "burst", "freeze", "color"}:
                     raise ValueError(f"unsupported inbound ring event: {event_type}")
                 incoming_session = payload.get("session_id")
                 incoming_audio = payload.get("audio_id")

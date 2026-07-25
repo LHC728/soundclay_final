@@ -129,6 +129,21 @@ def test_protocol_rejects_nonfinite_motion() -> None:
         )
 
 
+def test_protocol_accepts_signed_finger_motion_and_session_alias() -> None:
+    message = normalize_ring_event(
+        {
+            "type": "finger",
+            "timestamp": 2,
+            "payload": {"session_id": "SC-001", "sequence": 10, "value": -1.8},
+        }
+    )
+    assert message["payload"] == {
+        "sessionId": "SC-001",
+        "value": -1.0,
+        "sequence": 10,
+    }
+
+
 def test_event_guard_deduplicates_sequences_bursts_and_freezes() -> None:
     guard = RingEventGuard()
     imu = normalize_ring_event(

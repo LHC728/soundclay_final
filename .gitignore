@@ -27,6 +27,7 @@ backend/runtime/
 
 # Logs and system files
 *.log
+node_modules/
 dist/
 .vscode/
 .DS_Store

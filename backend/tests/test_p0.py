@@ -563,6 +563,11 @@ def test_mock_motion_routes_clamp_broadcast_and_update_session(client) -> None:
         assert twist["payload"]["session_id"] == "test-session"
         assert websocket.receive_json() == twist
 
+        finger = test_client.post("/api/mock/finger?value=-3").json()
+        assert finger["payload"]["value"] == -1.0
+        assert finger["payload"]["gain"] == 0.0
+        assert websocket.receive_json() == finger
+
         burst = test_client.post("/api/mock/burst?strength=-2").json()
         assert burst["payload"]["strength"] == 0.0
         assert websocket.receive_json() == burst
@@ -574,6 +579,7 @@ def test_mock_motion_routes_clamp_broadcast_and_update_session(client) -> None:
     assert server.session.motion["burstCount"] == 1
     assert [item["type"] for item in server.session.motion["trace"]] == [
         "twist",
+        "finger",
         "burst",
         "freeze",
     ]
@@ -685,7 +691,8 @@ def test_ableton_midi_reuses_saved_live_set_mapping(monkeypatch) -> None:
     ableton_adapter.close_midi_output()
 
     assert ableton_adapter.send_scene("joy", "express") is True
-    ableton_adapter.send_motion("twist", {"value": 0.5, "energy": 0.25})
+    ableton_adapter.send_motion("twist", {"value": 0.5})
+    ableton_adapter.send_motion("finger", {"value": -0.5})
     ableton_adapter.send_motion("burst", {"strength": 0.8})
 
     assert [(message.type, getattr(message, "note", None)) for message in messages[:2]] == [
@@ -700,6 +707,27 @@ def test_ableton_midi_reuses_saved_live_set_mapping(monkeypatch) -> None:
     ]
     assert all(message.channel == 0 for message in messages)
     ableton_adapter.close_midi_output()
+
+
+def test_frontend_ableton_motion_route_maps_signed_controls(client, monkeypatch) -> None:
+    test_client, _, _ = client
+    sent = []
+    monkeypatch.setattr(server, "send_ableton_motion", lambda kind, payload: sent.append((kind, payload)))
+
+    twist = test_client.post("/api/ableton/motion/twist?value=-1").json()
+    finger = test_client.post("/api/ableton/motion/finger?value=0.6").json()
+    burst = test_client.post("/api/ableton/motion/burst?value=2").json()
+    unsupported = test_client.post("/api/ableton/motion/unknown?value=0")
+
+    assert twist == {"ok": True, "type": "twist", "value": 0.0}
+    assert finger == {"ok": True, "type": "finger", "value": 0.6}
+    assert burst == {"ok": True, "type": "burst", "value": 1.0}
+    assert unsupported.status_code == 422
+    assert sent == [
+        ("twist", {"value": 0.0}),
+        ("finger", {"value": 0.6}),
+        ("burst", {"strength": 1.0}),
+    ]
 
 
 def test_ableton_stop_sends_midi_clock_stop(monkeypatch) -> None:

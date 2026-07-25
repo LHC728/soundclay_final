@@ -7,8 +7,8 @@ from collections import deque
 from typing import Any
 
 
-RING_EVENT_TYPES = {"status", "audio_ready", "imu", "burst", "freeze", "error"}
-MOTION_EVENT_TYPES = {"imu", "burst", "freeze"}
+RING_EVENT_TYPES = {"status", "audio_ready", "imu", "finger", "burst", "freeze", "error"}
+MOTION_EVENT_TYPES = {"imu", "finger", "burst", "freeze"}
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
 
@@ -206,6 +206,19 @@ def normalize_ring_event(raw: Any) -> dict[str, Any]:
             normalized_payload["deviceTimestampMs"] = _integer(
                 payload["deviceTimestampMs"], "deviceTimestampMs", minimum=0
             )
+    elif event_type == "finger":
+        normalized_payload["value"] = _finite_number(
+            payload.get("value", payload.get("x", 0)),
+            "value",
+            minimum=-1,
+            maximum=1,
+        )
+        if "sequence" in payload:
+            normalized_payload["sequence"] = _integer(payload["sequence"], "sequence", minimum=0)
+        if "deviceTimestampMs" in payload:
+            normalized_payload["deviceTimestampMs"] = _integer(
+                payload["deviceTimestampMs"], "deviceTimestampMs", minimum=0
+            )
     elif event_type == "freeze":
         normalized_payload["active"] = _boolean(payload.get("active", True), "active")
         source = _bounded_text(payload.get("source", "key_double_press"), "source", 128)
@@ -247,7 +260,7 @@ class RingEventGuard:
 
     def __init__(self, maximum_discrete_events: int = 512) -> None:
         self.maximum_discrete_events = maximum_discrete_events
-        self.last_imu_sequence: dict[str, int] = {}
+        self.last_motion_sequence: dict[tuple[str, str], int] = {}
         self.freeze_state: dict[str, bool] = {}
         self._seen_discrete: set[tuple[str, str, int]] = set()
         self._discrete_order: deque[tuple[str, str, int]] = deque()
@@ -259,12 +272,13 @@ class RingEventGuard:
         if event_type not in MOTION_EVENT_TYPES or not session_id:
             return True
 
-        if event_type == "imu" and "sequence" in payload:
+        if event_type in {"imu", "finger"} and "sequence" in payload:
             sequence = payload["sequence"]
-            previous = self.last_imu_sequence.get(session_id)
+            sequence_key = (session_id, event_type)
+            previous = self.last_motion_sequence.get(sequence_key)
             if previous is not None and sequence <= previous:
                 return False
-            self.last_imu_sequence[session_id] = sequence
+            self.last_motion_sequence[sequence_key] = sequence
             return True
 
         if event_type == "freeze":
@@ -284,7 +298,7 @@ class RingEventGuard:
         return True
 
     def reset(self) -> None:
-        self.last_imu_sequence.clear()
+        self.last_motion_sequence.clear()
         self.freeze_state.clear()
         self._seen_discrete.clear()
         self._discrete_order.clear()
