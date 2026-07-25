@@ -475,6 +475,13 @@ function render() {
 async function startRecording() {
   try {
     if (ringConnected) {
+      // Every physical recording needs its own backend/ring session directory.
+      // Retrying with the previous session ID is intentionally rejected by the
+      // ring runtime because it would overwrite ring_raw.bin/original.wav.
+      const resetResponse = await fetch(`${API_BASE}/api/reset`, { method: 'POST' })
+      if (!resetResponse.ok) {
+        throw new Error(`Unable to create a fresh recording session (HTTP ${resetResponse.status})`)
+      }
       const response = await fetch(`${API_BASE}/api/ring/session/start`, { method: 'POST' })
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}))
