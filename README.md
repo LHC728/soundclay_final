@@ -84,7 +84,7 @@ python -m uvicorn server:app --host 127.0.0.1 --port 8000
 Set-Location frontend_final
 npm ci
 Copy-Item .env.example .env.local
-npm run dev -- --host 127.0.0.1
+npm run dev -- --host 0.0.0.0
 ```
 
 打开 <http://127.0.0.1:5173>。
@@ -102,7 +102,8 @@ frontend_final/start-soundclay.bat
 `frontend_final/.env.local`：
 
 ```dotenv
-VITE_API_BASE=http://127.0.0.1:8000
+# 留空后由 Vite 将 /api 代理到本机后端，手机不会错误访问自身的 127.0.0.1。
+VITE_API_BASE=
 VITE_WS_URL=ws://127.0.0.1:8000/ws/ring
 VITE_PUBLIC_ORIGIN=http://<电脑局域网IPv4>:5173
 ```
@@ -206,10 +207,15 @@ OBS 不是核心流程的硬依赖。未启动 OBS 时，录音、动作雕刻�
 
 一次性设置：
 
-1. 在 OBS 中添加 SoundClay 浏览器的“窗口采集”或“显示器采集”。
-2. 保留桌面/应用声音；不希望录入人声时关闭麦克风轨道。
-3. 打开“工具 → WebSocket 服务器设置”，启用端口 `4455`，本地原型关闭身份认证。
-4. 在“设置 → 输出 → 录制”中选择 MP4 格式和可写入目录。
+1. 打开“工具 → WebSocket 服务器设置”，启用端口 `4455`，本地原型关闭身份认证。
+2. 在“设置 → 输出 → 录制”中选择 MP4（或 Hybrid MP4）格式和可写入目录。
+3. 保持 OBS 主窗口打开，在仓库根目录执行以下命令。脚本会保留现有场景，只补充屏幕采集、复用已有桌面音频并静音麦克风：
+
+```powershell
+.\.venv311\Scripts\python.exe backend\configure_obs.py
+```
+
+重复运行此命令是安全的，不会重复创建源。若 OBS 已有全局桌面音频，脚本会优先复用它以避免声音叠加。
 
 选择模式进入雕刻页后，前端调用 `POST /api/obs/recording/start`；点击凝固时调用 `POST /api/obs/recording/stop`。OBS 返回的 MP4 副本会写入：
 
