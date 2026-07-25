@@ -17,6 +17,7 @@ _DEFAULT_MIDI_PORT = "SoundClay MIDI"
 _MIDI_CC_TIMBRE = 20
 _MIDI_CC_MAIN_GAIN = 21
 _MIDI_NOTE_BURST = 70
+_MIDI_SCENE_NOTE_HOLD_SECONDS = 0.3
 _MIDI_SCENE_NOTES = {
     ("joy", "express"): 60,
     ("joy", "soothe"): 61,
@@ -214,9 +215,11 @@ def send_midi_cc(control: int, normalized_value: float) -> bool:
     return sent
 
 
-def send_midi_note(note: int, velocity: int = 127) -> bool:
+def send_midi_note(note: int, velocity: int = 127, *, hold_seconds: float = 0.0) -> bool:
     if not 0 <= note <= 127 or not 0 <= velocity <= 127:
         raise ValueError("MIDI note and velocity must be between 0 and 127")
+    if not math.isfinite(hold_seconds) or hold_seconds < 0:
+        raise ValueError("MIDI note hold duration must be finite and non-negative")
     note_on = mido.Message(
         "note_on", channel=_midi_channel(), note=note, velocity=velocity
     )
@@ -225,6 +228,8 @@ def send_midi_note(note: int, velocity: int = 127) -> bool:
     )
     sent = _send_midi(note_on)
     if sent:
+        if hold_seconds:
+            time.sleep(hold_seconds)
         _send_midi(note_off)
     return sent
 
@@ -235,7 +240,10 @@ def send_scene(emotion: str, mode: str) -> bool:
     note = _MIDI_SCENE_NOTES.get(key)
     if note is None:
         raise ValueError(f"unsupported Ableton scene mapping: {emotion}/{mode}")
-    return send_midi_note(note)
+    # Live's scene-launch mapping can miss a note whose on/off messages arrive
+    # in the same scheduler tick. Match the proven manual test by holding the
+    # scene note briefly; burst keeps its immediate one-shot behavior.
+    return send_midi_note(note, hold_seconds=_MIDI_SCENE_NOTE_HOLD_SECONDS)
 
 
 def send_stop() -> bool:
