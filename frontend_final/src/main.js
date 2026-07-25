@@ -56,16 +56,6 @@ const audio = new SoundClayAudio({
 })
 
 const STATE_INDEX = { idle: 0, recording: 0, understanding: 1, mode: 1, sculpt: 2, result: 3 }
-const DEMO_MOTION_SEQUENCE = [
-  { type: 'twist', delayMs: 0 },
-  { type: 'twist', delayMs: 5000 },
-  { type: 'twist', delayMs: 5000 },
-  { type: 'burst', delayMs: 2000 },
-  { type: 'burst', delayMs: 2000 },
-  { type: 'finger', value: -1, delayMs: 5000 },
-  { type: 'finger', value: 1, delayMs: 2000 },
-  { type: 'finger', value: 1, delayMs: 2000 },
-]
 let state = 'idle'
 let mode = 0.5
 let modeSelectionCommitted = false
@@ -84,8 +74,6 @@ let savedWork = null
 let savePromise = Promise.resolve(null)
 let finalMotion = {}
 let detectedEmotion = 'neutral_mixed'
-let demoSequenceArmed = false
-let demoSequenceRunId = 0
 let obsRecordingStarted = false
 let obsStartPromise = Promise.resolve(false)
 const lastAbletonSync = { twist: 0, finger: 0 }
@@ -505,7 +493,6 @@ async function stopRecording() {
     setState('understanding')
     const analysis = await analyzeRecording(audio.exportOriginalWav())
     detectedEmotion = analysis.emotion || 'neutral_mixed'
-    demoSequenceArmed = true
     setMode(0.5)
     setState('mode')
   } catch (error) {
@@ -560,10 +547,6 @@ function enterSculpt() {
     showErrorToast(error instanceof Error ? error.message : '无法触发 Ableton Live')
     return null
   })
-  if (demoSequenceArmed) {
-    demoSequenceArmed = false
-    void materialRequest.finally(() => runDemoMotionSequence())
-  }
   return materialRequest
 }
 
@@ -625,29 +608,6 @@ function demoSphere() {
   }, 520)
 }
 
-function stopDemoMotionSequence() {
-  demoSequenceRunId += 1
-}
-
-function waitForDemoDelay(delayMs, runId) {
-  if (delayMs <= 0) return Promise.resolve(runId === demoSequenceRunId)
-  return new Promise((resolve) => {
-    window.setTimeout(() => resolve(runId === demoSequenceRunId), delayMs)
-  })
-}
-
-async function runDemoMotionSequence() {
-  const runId = ++demoSequenceRunId
-  for (const action of DEMO_MOTION_SEQUENCE) {
-    const isCurrent = await waitForDemoDelay(action.delayMs, runId)
-    if (!isCurrent || state !== 'sculpt' || ringFrozen) return
-
-    if (action.type === 'twist') demoSphere()
-    else if (action.type === 'burst') triggerBurst(1, { syncAbleton: true })
-    else if (action.type === 'finger') applySizeControl(action.value, { notify: true, syncAbleton: true })
-  }
-}
-
 function triggerBurst(strength = 1, { syncAbleton = false } = {}) {
   if (state !== 'sculpt' || ringFrozen) return
   const normalized = Math.min(1.35, Math.max(0.16, Number(strength) || 1))
@@ -703,7 +663,6 @@ function triggerPull(strength = 1) {
 
 function completeCreation({ message = '作品已凝固', burst = false } = {}) {
   if (state !== 'sculpt' || ringFrozen || isCompleting) return
-  stopDemoMotionSequence()
   isCompleting = true
 
   if (burst) {
@@ -963,8 +922,6 @@ function downloadBlob(blob, name) {
 }
 
 function restart() {
-  stopDemoMotionSequence()
-  demoSequenceArmed = false
   clearTimeout(recordingTimeout)
   clearInterval(recordingTimer)
   clearTimeout(completionTimer)
