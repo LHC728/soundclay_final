@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
-import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -297,15 +295,6 @@ class SenseVoiceAdapter:
             "STT_TIMEOUT_SECONDS", 120.0, 1.0, 3600.0
         )
         try:
-            isolate_default = "true" if os.name == "nt" else "false"
-            isolate = os.getenv(
-                "SENSEVOICE_ISOLATE_PROCESS", isolate_default
-            ).strip().lower() in {"1", "true", "yes", "on"}
-            if isolate:
-                return await asyncio.wait_for(
-                    _transcribe_sensevoice_isolated(audio_path),
-                    timeout=timeout_seconds,
-                )
             return await asyncio.wait_for(
                 asyncio.to_thread(_transcribe_sensevoice, audio_path),
                 timeout=timeout_seconds,
@@ -315,66 +304,6 @@ class SenseVoiceAdapter:
                 f"Local transcription timed out after {timeout_seconds:g} seconds. "
                 "Retry with a shorter WAV or increase STT_TIMEOUT_SECONDS."
             ) from exc
-
-
-async def _transcribe_sensevoice_isolated(audio_path: Path) -> SpeechRecognition:
-    """Run SenseVoice outside the WinRT BLE process on Windows.
-
-    The ``winrt`` wheel and Torch both load native C++ runtimes. On the target
-    Windows machine that combination can terminate Python with an access
-    violation, which cannot be caught as a normal exception. A local worker
-    process keeps those native dependency sets isolated.
-    """
-    worker = Path(__file__).with_name("sensevoice_worker.py")
-    environment = os.environ.copy()
-    environment.setdefault("PYTHONUTF8", "1")
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        str(worker),
-        str(audio_path.resolve()),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=environment,
-    )
-    try:
-        stdout, stderr = await process.communicate()
-    except asyncio.CancelledError:
-        process.kill()
-        await process.wait()
-        raise
-
-    output = stdout.decode("utf-8", errors="replace")
-    marker = "SOUNDCLAY_RESULT_JSON="
-    payload_line = next(
-        (line[len(marker) :] for line in reversed(output.splitlines()) if line.startswith(marker)),
-        None,
-    )
-    if process.returncode != 0 or payload_line is None:
-        details = stderr.decode("utf-8", errors="replace").strip()
-        if not details:
-            details = output.strip()
-        if len(details) > 1200:
-            details = details[-1200:]
-        raise STTError(
-            "Isolated local SenseVoice process failed"
-            + (f": {details}" if details else f" (exit {process.returncode})")
-        )
-
-    try:
-        payload = json.loads(payload_line)
-        speech_emotion = (
-            Emotion(payload["speech_emotion"])
-            if payload.get("speech_emotion")
-            else None
-        )
-        return SpeechRecognition(
-            text=str(payload["text"]),
-            provider=str(payload.get("provider", "sensevoice")),
-            speech_emotion=speech_emotion,
-            raw_emotion=payload.get("raw_emotion"),
-        )
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise STTError(f"Invalid response from isolated SenseVoice process: {exc}") from exc
 
 
 def get_stt_adapter() -> STTProviderAdapter:

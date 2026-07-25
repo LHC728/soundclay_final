@@ -56,7 +56,6 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("EMOTION_PROVIDER", "local")
     monkeypatch.setenv("ABLETON_OSC_ENABLED", "false")
     monkeypatch.setenv("ABLETON_MIDI_ENABLED", "false")
-    monkeypatch.setenv("SOUNDCLAY_RING_ENABLED", "false")
     emotion_adapter._reset_runtime_state()
     server.session = SessionState(session_id="test-session")
     server.bus = EventBus()
@@ -586,12 +585,6 @@ def test_mock_motion_routes_clamp_broadcast_and_update_session(client) -> None:
         assert finger["payload"]["gain"] == 0.0
         assert websocket.receive_json() == finger
 
-        tilt = test_client.post("/api/mock/tilt-x?value=0.8").json()
-        assert tilt["type"] == "tiltX"
-        assert tilt["payload"]["value"] == 0.8
-        assert tilt["payload"]["gain"] == 0.9
-        assert websocket.receive_json() == tilt
-
         burst = test_client.post("/api/mock/burst?strength=-2").json()
         assert burst["payload"]["strength"] == 0.0
         assert websocket.receive_json() == burst
@@ -604,7 +597,6 @@ def test_mock_motion_routes_clamp_broadcast_and_update_session(client) -> None:
     assert [item["type"] for item in server.session.motion["trace"]] == [
         "twist",
         "finger",
-        "tiltX",
         "burst",
         "freeze",
     ]
@@ -789,19 +781,16 @@ def test_frontend_ableton_motion_route_maps_signed_controls(client, monkeypatch)
     monkeypatch.setattr(server, "send_ableton_motion", lambda kind, payload: sent.append((kind, payload)))
 
     twist = test_client.post("/api/ableton/motion/twist?value=-1").json()
-    tilt = test_client.post("/api/ableton/motion/tiltX?value=-0.6").json()
     finger = test_client.post("/api/ableton/motion/finger?value=0.6").json()
     burst = test_client.post("/api/ableton/motion/burst?value=2").json()
     unsupported = test_client.post("/api/ableton/motion/unknown?value=0")
 
     assert twist == {"ok": True, "type": "twist", "value": 0.0}
-    assert tilt == {"ok": True, "type": "tiltX", "value": -0.6}
     assert finger == {"ok": True, "type": "finger", "value": 0.6}
     assert burst == {"ok": True, "type": "burst", "value": 1.0}
     assert unsupported.status_code == 422
     assert sent == [
         ("twist", {"value": 0.0}),
-        ("finger", {"value": -0.6}),
         ("finger", {"value": 0.6}),
         ("burst", {"strength": 1.0}),
     ]
@@ -1274,32 +1263,6 @@ def test_sensevoice_transcript_keeps_audio_emotion_metadata(monkeypatch, tmp_pat
     assert transcript.provider == "sensevoice"
     assert transcript.speech_emotion == Emotion.SADNESS
     assert transcript.raw_emotion == "SAD"
-
-
-def test_isolated_sensevoice_worker_response_is_decoded(monkeypatch, tmp_path) -> None:
-    audio = tmp_path / "ring.wav"
-    audio.write_bytes(b"RIFF")
-
-    class FakeProcess:
-        returncode = 0
-
-        async def communicate(self):
-            return (
-                b'worker log\nSOUNDCLAY_RESULT_JSON={"text":"hello","provider":"sensevoice",'
-                b'"speech_emotion":"joy","raw_emotion":"HAPPY"}\n',
-                b"",
-            )
-
-    create_process = AsyncMock(return_value=FakeProcess())
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
-
-    recognition = asyncio.run(stt_adapter._transcribe_sensevoice_isolated(audio))
-
-    assert recognition.text == "hello"
-    assert recognition.provider == "sensevoice"
-    assert recognition.speech_emotion == Emotion.JOY
-    assert recognition.raw_emotion == "HAPPY"
-    create_process.assert_awaited_once()
 
 
 def test_sensevoice_emotion_is_the_primary_decision_signal() -> None:

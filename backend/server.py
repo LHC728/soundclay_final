@@ -761,23 +761,20 @@ async def preview_recipe(body: ModeSelectRequest) -> dict:
 def _motion_event(event_type: str, payload: dict, timestamp: int | None = None) -> dict:
     emitted_at = timestamp if timestamp is not None else int(time.time() * 1000)
     clean_payload: dict = {}
-    ableton_event_type = event_type
     if event_type == "twist":
         value = _clamped_number(float(payload.get("value", 0.0)), "value")
         session.motion["twist"] = value
         clean_payload["value"] = value
-    elif event_type in {"tiltX", "finger"}:
+    elif event_type == "finger":
         raw_value = float(payload.get("value", payload.get("x", 0.0)))
         if not math.isfinite(raw_value):
             raise HTTPException(status_code=422, detail="value must be finite")
         value = max(-1.0, min(1.0, raw_value))
         gain = (value + 1.0) / 2.0
         session.motion["finger"] = value
-        session.motion["tiltX"] = value
         session.motion["size"] = value
         session.motion["gain"] = gain
         clean_payload.update({"value": value, "gain": gain})
-        ableton_event_type = "finger"
     elif event_type == "burst":
         strength = _clamped_number(
             float(payload.get("strength", 0.0)), "strength"
@@ -809,7 +806,7 @@ def _motion_event(event_type: str, payload: dict, timestamp: int | None = None) 
     if len(trace) > 500:
         del trace[:-500]
     _touch_session()
-    send_ableton_motion(ableton_event_type, clean_payload)
+    send_ableton_motion(event_type, clean_payload)
     return event(event_type, clean_payload, timestamp=emitted_at)
 
 
@@ -970,18 +967,11 @@ async def _ingest_ring_event(raw: dict, *, source: str) -> dict:
                     },
                 )
 
-        if source == "ring_runtime":
-            # Keep the BLE runtime in audio_ready until local recognition has
-            # finished. Entering WinRT motion streaming while Torch/FunASR is
-            # loading can crash the whole Windows Python process, which drops
-            # the transcript WebSocket event before the frontend receives it.
-            await _run_ring_audio_pipeline(metadata["audio_id"])
-        else:
-            task = asyncio.create_task(
-                _run_ring_audio_pipeline(metadata["audio_id"]),
-                name=f"ring-stt-{metadata['audio_id'][:12]}",
-            )
-            _track_ring_audio_task(task)
+        task = asyncio.create_task(
+            _run_ring_audio_pipeline(metadata["audio_id"]),
+            name=f"ring-stt-{metadata['audio_id'][:12]}",
+        )
+        _track_ring_audio_task(task)
         return {"accepted": True, "event": message}
 
     ring_session_id = payload["sessionId"]
@@ -990,13 +980,8 @@ async def _ingest_ring_event(raw: dict, *, source: str) -> dict:
 
     if event_type == "imu":
         twist = payload["twist"]
-        tilt_x = payload.get("tiltX", 0.0)
         session.motion["ringSessionId"] = ring_session_id
         session.motion["twist"] = twist
-        session.motion["tiltX"] = tilt_x
-        session.motion["finger"] = tilt_x
-        session.motion["size"] = tilt_x
-        session.motion["gain"] = (tilt_x + 1.0) / 2.0
         session.motion["accelMag"] = payload["accelMag"]
         session.motion["gyroZ"] = payload["gyroZ"]
         trace = session.motion.setdefault("trace", [])
@@ -1009,7 +994,6 @@ async def _ingest_ring_event(raw: dict, *, source: str) -> dict:
             "twist",
             {"value": (twist + 1.0) / 2.0},
         )
-        send_ableton_motion("finger", {"value": tilt_x})
         message = event("imu", {**payload, "source": source}, timestamp=timestamp)
     else:
         message = _motion_event(event_type, payload, timestamp)
@@ -1065,13 +1049,6 @@ async def mock_finger(value: float = Query(default=0.0)) -> dict:
     return message
 
 
-@app.post("/api/mock/tilt-x")
-async def mock_tilt_x(value: float = Query(default=0.0)) -> dict:
-    message = _motion_event("tiltX", {"value": value})
-    await bus.broadcast(message)
-    return message
-
-
 @app.post("/api/ableton/motion/{motion_type}")
 async def ableton_motion(motion_type: str, value: float = Query(...)) -> dict:
     """Drive Ableton from the frontend's no-ring interaction simulator."""
@@ -1080,7 +1057,7 @@ async def ableton_motion(motion_type: str, value: float = Query(...)) -> dict:
     if motion_type == "twist":
         normalized = max(0.0, min(1.0, (value + 1.0) / 2.0))
         send_ableton_motion("twist", {"value": normalized})
-    elif motion_type in {"tiltX", "finger"}:
+    elif motion_type == "finger":
         normalized = max(-1.0, min(1.0, value))
         send_ableton_motion("finger", {"value": normalized})
     elif motion_type == "burst":
@@ -1370,14 +1347,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                 has_ring_session = bool(payload.get("sessionId") or payload.get("session_id"))
                 if event_type in {"status", "imu", "error"} or (
-                    event_type in {"tiltX", "finger", "burst", "freeze"} and has_ring_session
+                    event_type in {"finger", "burst", "freeze"} and has_ring_session
                 ):
                     await _ingest_ring_event(incoming, source="websocket")
                     continue
 
                 aliases = {
                     "imu/twist": "twist",
-                    "imu/tiltX": "tiltX",
                     "imu/finger": "finger",
                     "finger_move": "finger",
                     "size": "finger",
@@ -1388,7 +1364,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "ui/color": "color",
                 }
                 event_type = aliases.get(event_type, event_type)
-                if event_type not in {"twist", "tiltX", "finger", "burst", "freeze", "color"}:
+                if event_type not in {"twist", "finger", "burst", "freeze", "color"}:
                     raise ValueError(f"unsupported inbound ring event: {event_type}")
                 incoming_session = payload.get("session_id")
                 incoming_audio = payload.get("audio_id")

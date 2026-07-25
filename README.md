@@ -246,17 +246,16 @@ http://<电脑局域网IPv4>:5173/share.html?id=<work-id>
 SOUNDCLAY_RING_ENABLED=false
 ```
 
-新版 A/B `RingRuntime` 已直接合入 `backend/`，不再要求桌面上保留独立戒指仓库。真机使用时在 `backend/.env` 中填写：
+连接 AB 的 `RingRuntime` 时，在 `backend/.env` 中填写：
 
 ```dotenv
 SOUNDCLAY_RING_ENABLED=true
+SOUNDCLAY_RING_PATH=C:\path\to\soundclay-ring
 SOUNDCLAY_RING_ADDRESS=FA:7E:92:E6:38:6D
 SOUNDCLAY_FFMPEG=ffmpeg
 ```
 
-`SOUNDCLAY_RING_PATH` 现在仅用于临时覆盖内置运行时，通常保持为空。新版动作协议为：转腕 `imu.twist` 控制整体旋转和三档音色，左右倾斜 `imu.tiltX` 控制球体/音量三档，`burst` 触发爆散与鼓点，实体按钮双击产生 `freeze` 并凝固。真机联调前请关闭手机 Zilo APK、手机蓝牙及其他 BLE 程序，并确保只运行一个 FastAPI/Python 进程。
-
-成员交付协议已保存在 [`docs/ring_v2_handoff.md`](docs/ring_v2_handoff.md) 和 [`docs/ring_v2_gesture_interface.md`](docs/ring_v2_gesture_interface.md)。
+`SOUNDCLAY_RING_PATH` 应指向直接包含 `ring_runtime.py` 的目录。真机联调前请关闭手机 Zilo APK 和其他 BLE 程序，并确保只运行一个 FastAPI/Python 进程。
 
 ### 无戒指事件回放
 

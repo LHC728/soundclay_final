@@ -17,7 +17,6 @@ const app = document.querySelector('#app')
 app.innerHTML = `
   <main class="soundclay" data-state="idle">
     <p class="brand">SoundClay</p>
-    <p class="connection-status" id="connection-status" data-connection="connecting">正在连接戒指</p>
 
     <section class="stage" aria-live="polite">
       <div class="visual" id="visual" aria-hidden="true"></div>
@@ -187,10 +186,8 @@ function handleSocketEvent(message) {
       if (typeof payload.ringConnected === 'boolean') ringConnected = payload.ringConnected
       if (typeof payload.connected === 'boolean') ringConnected = payload.connected
       if (payload.phase === 'connected') ringConnected = true
-      const phase = String(payload.ringPhase || payload.phase || '').toLowerCase()
-      const isConnecting = ['connecting', 'connected_settling', 'reconnecting', 'scanning'].includes(phase)
-      const label = ringConnected ? '戒指已连接' : isConnecting ? '正在连接戒指' : '戒指未连接'
-      updateConnectionStatus(label, ringConnected ? 'ring' : isConnecting ? 'connecting' : 'offline')
+      const label = ringConnected ? '戒指已连接' : ringEnabled ? '等待戒指' : '后端已连接 · 模拟模式'
+      updateConnectionStatus(label, ringConnected ? 'ring' : 'online')
       break
     }
     case 'recording':
@@ -220,7 +217,7 @@ function handleSocketEvent(message) {
 
       audio.setMorph({ space: (twist + 1) / 2, energy })
 
-      const fingerValue = payload.tiltX ?? payload.fingerX ?? payload.finger ?? payload.size ?? payload.scale
+      const fingerValue = payload.fingerX ?? payload.finger ?? payload.size ?? payload.scale
       if (Number.isFinite(Number(fingerValue))) applySizeControl(Number(fingerValue))
       break
     }
@@ -232,7 +229,6 @@ function handleSocketEvent(message) {
       audio.setMorph({ space: (twist + 1) / 2 })
       break
     }
-    case 'tiltX':
     case 'finger':
     case 'finger_move':
     case 'size':
@@ -296,11 +292,11 @@ function handleSocketEvent(message) {
 
 function connectRingSocket() {
   if (socket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(socket.readyState)) return
-  updateConnectionStatus('正在连接戒指', 'connecting')
+  updateConnectionStatus('正在连接后端', 'connecting')
   socket = new WebSocket(WS_URL)
   socket.addEventListener('open', () => {
     reconnectDelay = 800
-    updateConnectionStatus(ringConnected ? '戒指已连接' : '正在获取戒指状态', ringConnected ? 'ring' : 'connecting')
+    updateConnectionStatus('后端已连接 · 模拟模式', 'online')
   })
   socket.addEventListener('message', (event) => {
     try {
@@ -312,7 +308,7 @@ function connectRingSocket() {
   socket.addEventListener('close', () => {
     socket = null
     ringConnected = false
-    updateConnectionStatus('戒指连接已断开', 'offline')
+    updateConnectionStatus('后端离线 · 本地模式', 'offline')
     clearTimeout(reconnectTimer)
     reconnectTimer = window.setTimeout(connectRingSocket, reconnectDelay)
     reconnectDelay = Math.min(8000, reconnectDelay * 1.7)
@@ -475,13 +471,6 @@ function render() {
 async function startRecording() {
   try {
     if (ringConnected) {
-      // Every physical recording needs its own backend/ring session directory.
-      // Retrying with the previous session ID is intentionally rejected by the
-      // ring runtime because it would overwrite ring_raw.bin/original.wav.
-      const resetResponse = await fetch(`${API_BASE}/api/reset`, { method: 'POST' })
-      if (!resetResponse.ok) {
-        throw new Error(`Unable to create a fresh recording session (HTTP ${resetResponse.status})`)
-      }
       const response = await fetch(`${API_BASE}/api/ring/session/start`, { method: 'POST' })
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}))
@@ -1193,7 +1182,6 @@ window.addEventListener('soundclay:gesture', (event) => {
     case 'pull':
       triggerPull(strength)
       break
-    case 'tiltX':
     case 'finger':
     case 'finger_move':
     case 'size':

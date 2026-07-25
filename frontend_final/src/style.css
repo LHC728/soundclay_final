@@ -74,7 +74,7 @@ input:focus-visible {
 .connection-status {
   position: fixed;
   z-index: 40;
-  top: calc(var(--safe-top) + 20px);
+  top: calc(var(--safe-top) + 23px);
   left: 50%;
   transform: translateX(-50%);
   padding-left: 12px;
@@ -101,12 +101,6 @@ input:focus-visible {
   background: #8fc9d8;
 }
 
-.connection-status[data-connection="connecting"]::before {
-  background: #d8b66f;
-  box-shadow: 0 0 7px rgba(216, 182, 111, 0.42);
-  animation: connection-pulse 1.4s ease-in-out infinite;
-}
-
 .connection-status[data-connection="ring"]::before {
   background: #9ee6b4;
   box-shadow: 0 0 8px rgba(158, 230, 180, 0.5);
@@ -115,16 +109,6 @@ input:focus-visible {
 .connection-status[data-connection="error"]::before,
 .connection-status[data-connection="offline"]::before {
   background: #dc746d;
-}
-
-@keyframes connection-pulse {
-  0%,
-  100% {
-    opacity: 0.42;
-  }
-  50% {
-    opacity: 1;
-  }
 }
 
 .stage {
