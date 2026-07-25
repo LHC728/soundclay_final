@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
@@ -14,6 +16,7 @@ from urllib.parse import unquote
 import soundfile as sf
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from audio_pipeline import analyze_audio
@@ -25,10 +28,12 @@ from ableton_adapter import send_stop as stop_ableton_playback
 from ableton_adapter import status as ableton_status
 from emotion_adapter import analyze_emotion
 from event_bus import EventBus
+from obs_adapter import OBSControlError, start_recording as start_obs_recording
+from obs_adapter import stop_recording as stop_obs_recording
 from recipe_engine import build_recipe
 from ring_integration import RingRuntimeManager
 from ring_protocol import RingEventGuard, RingProtocolError, normalize_ring_event
-from save_service import save_work
+from save_service import MAX_PROCESS_VIDEO_BYTES, save_public_work, save_work
 from schemas import (
     AudioFeatures,
     Emotion,
@@ -36,6 +41,7 @@ from schemas import (
     EventMessage,
     ModeSelectRequest,
     Phase,
+    PublicWorkRequest,
     SaveRequest,
     SessionState,
     TranscriptRequest,
@@ -46,8 +52,10 @@ from chinese_text import normalize_transcript
 BASE_DIR = Path(__file__).resolve().parent
 AUDIO_DIR = BASE_DIR / "audio"
 WORKS_DIR = BASE_DIR.parent / "works"
+PUBLIC_WORKS_DIR = BASE_DIR.parent / "public_works"
 AUDIO_DIR.mkdir(exist_ok=True)
 WORKS_DIR.mkdir(exist_ok=True)
+PUBLIC_WORKS_DIR.mkdir(exist_ok=True)
 
 ORIGINAL_AUDIO = AUDIO_DIR / "original.wav"
 OUTPUT_AUDIO = AUDIO_DIR / "output.wav"
@@ -98,6 +106,8 @@ app.mount("/works", StaticFiles(directory=WORKS_DIR), name="works")
 bus = EventBus()
 session = SessionState(session_id=str(uuid.uuid4()))
 audio_lock = asyncio.Lock()
+obs_recording_lock = asyncio.Lock()
+obs_recording_path: Path | None = None
 ring_event_guard = RingEventGuard()
 active_ring_session_id: str | None = None
 ring_status: dict = {
@@ -107,6 +117,29 @@ ring_status: dict = {
     "modeHint": "mock-controls-available",
     "lastError": None,
 }
+
+_PUBLIC_WORK_ID = re.compile(r"VP-\d{8}-\d{6}-\d{3}-[a-f0-9]{6}")
+
+
+def _public_work_directory(work_id: str) -> Path:
+    if not _PUBLIC_WORK_ID.fullmatch(work_id):
+        raise HTTPException(status_code=404, detail="shared work not found")
+    target = PUBLIC_WORKS_DIR / work_id
+    if not target.is_dir():
+        raise HTTPException(status_code=404, detail="shared work not found")
+    return target
+
+
+def _read_public_work(work_id: str) -> dict:
+    target = _public_work_directory(work_id)
+    metadata_path = target / "public.json"
+    try:
+        value = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=404, detail="shared work is unavailable") from exc
+    if not isinstance(value, dict) or value.get("id") != work_id:
+        raise HTTPException(status_code=404, detail="shared work is unavailable")
+    return value
 
 
 def event(event_type: str, payload: dict, *, timestamp: int | None = None) -> dict:
@@ -422,7 +455,8 @@ async def transcribe_original_audio(
 
         transcription_started = time.perf_counter()
         try:
-            transcript = normalize_transcript(await transcribe_audio(ORIGINAL_AUDIO))
+            recognized = await transcribe_audio(ORIGINAL_AUDIO)
+            transcript = normalize_transcript(str(recognized))
         except STTError as exc:
             session.phase = Phase.AUDIO_READY
             session.last_error = str(exc)
@@ -464,7 +498,12 @@ async def transcribe_original_audio(
                 )
 
         emotion_started = time.perf_counter()
-        decision = await analyze_emotion(transcript, session.features)
+        decision = await analyze_emotion(
+            transcript,
+            session.features,
+            speech_emotion=getattr(recognized, "speech_emotion", None),
+            speech_emotion_tag=getattr(recognized, "raw_emotion", None),
+        )
         result = decision.result
         session.emotion = result.emotion
         session.confidence = result.confidence
@@ -1142,6 +1181,129 @@ async def save_current_work(body: SaveRequest) -> dict:
     }
     await publish("saved", response)
     return response
+
+
+@app.post("/api/public/works")
+async def create_public_work(body: PublicWorkRequest) -> dict:
+    """Save a QR-safe work bundle without exposing the private session."""
+    global obs_recording_path
+    obs_video: bytes | None = None
+    if body.use_obs_recording:
+        async with obs_recording_lock:
+            path = obs_recording_path
+            obs_recording_path = None
+        if path is None or not path.is_file():
+            raise HTTPException(
+                status_code=422,
+                detail="OBS recording was not found; finish sculpting after OBS starts",
+            )
+        try:
+            if path.suffix.lower() != ".mp4" or path.stat().st_size > MAX_PROCESS_VIDEO_BYTES:
+                raise ValueError("OBS recording must be an MP4 no larger than 60 MB")
+            obs_video = await asyncio.to_thread(path.read_bytes)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=422, detail=f"could not read OBS recording: {exc}"
+            ) from exc
+    try:
+        result = await asyncio.to_thread(
+            save_public_work,
+            public_works_dir=PUBLIC_WORKS_DIR,
+            screenshot_data_url=body.screenshot_data_url,
+            processed_audio_data_url=body.processed_audio_data_url,
+            emotion=body.emotion.value,
+            caption=body.caption,
+            final_motion=body.final_motion,
+            process_video_data_url=body.process_video_data_url,
+            process_video_mp4=obs_video,
+            process_frames_data_urls=body.process_frames_data_urls,
+            process_frame_rate=body.process_frame_rate,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"public save failed: {exc}") from exc
+
+    work_id = result["id"]
+    return {
+        **result,
+        "workId": work_id,
+        "workUrl": f"/api/public/works/{work_id}",
+        "coverUrl": f"/api/public/works/{work_id}/cover",
+        "audioUrl": f"/api/public/works/{work_id}/audio",
+        "videoUrl": (
+            f"/api/public/works/{work_id}/video"
+            if result["has_process_video"]
+            else None
+        ),
+    }
+
+
+@app.post("/api/obs/recording/start")
+async def begin_obs_recording() -> dict:
+    global obs_recording_path
+    async with obs_recording_lock:
+        try:
+            result = await start_obs_recording()
+        except OBSControlError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        obs_recording_path = None
+    return result
+
+
+@app.post("/api/obs/recording/stop")
+async def end_obs_recording() -> dict:
+    global obs_recording_path
+    async with obs_recording_lock:
+        try:
+            path = await stop_obs_recording()
+        except OBSControlError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        obs_recording_path = path
+    return {"provider": "obs", "ready": True}
+
+
+@app.get("/api/public/works/{work_id}")
+async def get_public_work(work_id: str) -> dict:
+    metadata = await asyncio.to_thread(_read_public_work, work_id)
+    return {
+        **metadata,
+        "coverUrl": f"/api/public/works/{work_id}/cover",
+        "audioUrl": f"/api/public/works/{work_id}/audio",
+        "videoUrl": (
+            f"/api/public/works/{work_id}/video"
+            if metadata.get("has_process_video")
+            else None
+        ),
+    }
+
+
+@app.get("/api/public/works/{work_id}/cover")
+async def get_public_work_cover(work_id: str) -> FileResponse:
+    target = _public_work_directory(work_id) / "cover.png"
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="shared cover not found")
+    return FileResponse(target, media_type="image/png")
+
+
+@app.get("/api/public/works/{work_id}/audio")
+async def get_public_work_audio(work_id: str) -> FileResponse:
+    target = _public_work_directory(work_id) / "audio.wav"
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="shared audio not found")
+    return FileResponse(target, media_type="audio/wav")
+
+
+@app.get("/api/public/works/{work_id}/video")
+async def get_public_work_video(work_id: str) -> FileResponse:
+    directory = _public_work_directory(work_id)
+    webm = directory / "process.webm"
+    mp4 = directory / "process.mp4"
+    target = webm if webm.is_file() else mp4
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="shared process video not found")
+    media_type = "video/webm" if target.suffix == ".webm" else "video/mp4"
+    return FileResponse(target, media_type=media_type)
 
 
 @app.post("/api/reset")

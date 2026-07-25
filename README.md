@@ -1,6 +1,6 @@
 # SoundClay
 
-SoundClay 是一套本地运行的声音交互系统：用户先录下一段声音，再选择“舒缓”或“释放”模式，通过智能戒指或页面模拟动作改变 Three.js 粒子作品，并同步控制 Ableton Live 中的音乐、音色、鼓点和音量。
+SoundClay 是一套本地运行的声音交互系统：用户先录下一段声音，由本地语音模型生成内部情绪状态，再选择“舒缓”或“释放”模式，通过智能戒指或页面模拟动作改变 Three.js 粒子作品，并同步控制 Ableton Live 中的音乐、音色、鼓点和音量。系统还可通过 OBS 录制创作过程，生成二维码作品卡片供手机在局域网内查看。
 
 项目默认离线运行，不依赖云端数据库。录音、作品和模型缓存均保存在本机，并已通过 `.gitignore` 排除。
 
@@ -15,7 +15,7 @@ SoundClay 是一套本地运行的声音交互系统：用户先录下一段声�
    - 双击或点击“凝固”：冻结作品、停止 Ableton 音乐并保存。
 4. 结果页可以分享作品或重新开始。
 
-浏览器不会播放录下的声音；录音只用于驱动和保存作品，现场声音由 Ableton Live 输出。
+浏览器不会播放录下的声音；录音用于本地识别、驱动和保存作品，现场声音由 Ableton Live 输出。内部情绪结果不会显示在创作页面上。
 
 ## 项目结构
 
@@ -30,7 +30,8 @@ soundclay_final/
 ├─ frontend_final/          当前正式前端（Vite + Three.js）
 ├─ frontend/                保留的旧版前端，不是当前启动入口
 ├─ docs/                    集成说明
-└─ works/                   本地生成的作品，不提交 Git
+├─ works/                   本地私有作品，不提交 Git
+└─ public_works/            二维码页面可读取的公开投影，不提交 Git
 ```
 
 ## 环境要求
@@ -41,6 +42,7 @@ soundclay_final/
 - Ableton Live（需要音乐联动时）
 - loopMIDI（需要 MIDI 联动时）
 - FFmpeg（真戒指音频解码时）
+- OBS Studio 31+（需要录制创作过程时）
 
 无戒指模拟、后端测试和前端构建不需要真实硬件，也不需要启动 Ableton。
 
@@ -102,9 +104,12 @@ frontend_final/start-soundclay.bat
 ```dotenv
 VITE_API_BASE=http://127.0.0.1:8000
 VITE_WS_URL=ws://127.0.0.1:8000/ws/ring
+VITE_PUBLIC_ORIGIN=http://<电脑局域网IPv4>:5173
 ```
 
 修改环境变量后需要重新启动 Vite。
+
+`VITE_PUBLIC_ORIGIN` 用于二维码，不能填写 `localhost` 或 `127.0.0.1`。手机与电脑必须连接同一 Wi-Fi，且 Windows 防火墙需允许 Node.js 访问专用网络。
 
 ## Ableton Live 与 loopMIDI
 
@@ -195,6 +200,38 @@ ABLETON_OSC_PORT=11000
 - `/soundclay/freeze`
 - `/soundclay/color`
 
+## OBS 过程录制与二维码分享
+
+OBS 不是核心流程的硬依赖。未启动 OBS 时，录音、动作雕刻、Ableton 控制和普通作品保存仍可继续；分享卡片只是不包含过程视频。
+
+一次性设置：
+
+1. 在 OBS 中添加 SoundClay 浏览器的“窗口采集”或“显示器采集”。
+2. 保留桌面/应用声音；不希望录入人声时关闭麦克风轨道。
+3. 打开“工具 → WebSocket 服务器设置”，启用端口 `4455`，本地原型关闭身份认证。
+4. 在“设置 → 输出 → 录制”中选择 MP4 格式和可写入目录。
+
+选择模式进入雕刻页后，前端调用 `POST /api/obs/recording/start`；点击凝固时调用 `POST /api/obs/recording/stop`。OBS 返回的 MP4 副本会写入：
+
+```text
+public_works/<work-id>/process.mp4
+```
+
+公开作品接口只提供封面、处理后声音、过程视频、公开文案和动作参数，不公开原始录音、完整转写或私有 `portrait.json`。
+
+结果页点击“分享”后可：
+
+- 分享或复制局域网链接
+- 下载二维码作品卡片
+- 打印 A6 卡片
+- 下载处理后的声音
+
+手机扫码页地址格式为：
+
+```text
+http://<电脑局域网IPv4>:5173/share.html?id=<work-id>
+```
+
 ## 智能戒指接入
 
 硬件模式默认关闭，因此本地页面和自动测试不要求戒指：
@@ -254,6 +291,10 @@ SOUNDCLAY_FFMPEG=ffmpeg
 | `POST` | `/api/ring/session/start` | 启动戒指录音会话 |
 | `POST` | `/api/mock/ring-event` | 无戒指注入 AB 格式事件 |
 | `POST` | `/api/save` | 保存本地作品 |
+| `POST` | `/api/public/works` | 保存二维码可访问的公开作品投影 |
+| `GET` | `/api/public/works/{work-id}` | 读取公开作品及安全资产地址 |
+| `POST` | `/api/obs/recording/start` | 开始 OBS 过程录制 |
+| `POST` | `/api/obs/recording/stop` | 停止 OBS 并暂存 MP4 路径 |
 | `POST` | `/api/reset` | 重置当前会话 |
 | `WS` | `/ws/ring` | 戒指状态和动作事件 |
 
@@ -261,7 +302,7 @@ SOUNDCLAY_FFMPEG=ffmpeg
 
 ## 本地作品
 
-完成作品后，后端将内容保存在：
+完成作品后，后端将私有内容保存在：
 
 ```text
 works/<work-id>/
@@ -274,6 +315,16 @@ works/<work-id>/
 - `sculpture.png`
 - `portrait.json`
 - `metadata.json`
+
+可扫码分享的安全投影保存在：
+
+```text
+public_works/<work-id>/
+├─ cover.png
+├─ audio.wav
+├─ process.mp4 或 process.webm（启用过程录制时）
+└─ public.json
+```
 
 `works/`、录音文件、环境变量、虚拟环境、`node_modules` 和构建输出都不会提交到 Git。
 
@@ -321,7 +372,16 @@ npm run build
 
 ### 真实录音无法转写
 
-默认 `STT_PROVIDER=mock`。需要本地 Whisper 时改为：
+默认 `STT_PROVIDER=mock`。需要本地 SenseVoice 同时完成中文转写和语音情绪识别时改为：
+
+```dotenv
+STT_PROVIDER=sensevoice
+SENSEVOICE_MODEL=iic/SenseVoiceSmall
+SENSEVOICE_DEVICE=cpu
+SENSEVOICE_LANGUAGE=auto
+```
+
+首次使用前需要安装 `torch`、`torchaudio` 和 `funasr`，并准备好模型缓存。未安装 SenseVoice 时可继续使用本地 Whisper：
 
 ```dotenv
 STT_PROVIDER=faster_whisper

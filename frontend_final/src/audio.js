@@ -395,6 +395,11 @@ export class SoundClayAudio {
     return audioBufferToWav(rendered)
   }
 
+  exportOriginalWav() {
+    if (!this.buffer) throw new Error('没有可供识别的录音。')
+    return audioBufferToWav(this.buffer)
+  }
+
   reset() {
     this.stopPlayback()
     this.buffer = null

@@ -26,7 +26,7 @@ from emotion_analyzer import analyze_emotion_local
 from event_bus import EventBus
 from recipe_engine import build_recipe
 from schemas import AudioFeatures, Emotion, Mode, SessionState
-from stt_adapter import STTError
+from stt_adapter import STTError, SpeechRecognition
 
 
 def wav_bytes(*, frequency: float = 220.0, amplitude: float = 0.25, stereo: bool = False) -> bytes:
@@ -44,10 +44,13 @@ def wav_bytes(*, frequency: float = 220.0, amplitude: float = 0.25, stereo: bool
 def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     audio_dir = tmp_path / "audio"
     works_dir = tmp_path / "works"
+    public_works_dir = tmp_path / "public_works"
     audio_dir.mkdir()
     works_dir.mkdir()
+    public_works_dir.mkdir()
     monkeypatch.setattr(server, "AUDIO_DIR", audio_dir)
     monkeypatch.setattr(server, "WORKS_DIR", works_dir)
+    monkeypatch.setattr(server, "PUBLIC_WORKS_DIR", public_works_dir)
     monkeypatch.setattr(server, "ORIGINAL_AUDIO", audio_dir / "original.wav")
     monkeypatch.setattr(server, "OUTPUT_AUDIO", audio_dir / "output.wav")
     monkeypatch.setenv("EMOTION_PROVIDER", "local")
@@ -924,6 +927,58 @@ def test_save_valid_small_image_and_processed_audio_data_urls(client) -> None:
     assert (target / "output.wav").read_bytes().startswith(b"RIFF")
 
 
+def test_public_work_exposes_only_safe_assets(client) -> None:
+    test_client, _, _ = client
+    png = b"\x89PNG\r\n\x1a\n" + b"public-card"
+    payload = {
+        "screenshot_data_url": "data:image/png;base64,"
+        + base64.b64encode(png).decode("ascii"),
+        "processed_audio_data_url": "data:audio/wav;base64,"
+        + base64.b64encode(wav_bytes()).decode("ascii"),
+        "emotion": "sadness",
+        "caption": "夜色很轻，刚好接住我的沉默。",
+        "final_motion": {"twist": 0.4},
+    }
+    created = test_client.post("/api/public/works", json=payload)
+    assert created.status_code == 200
+    result = created.json()
+    assert result["workId"] == result["id"]
+
+    public_work = test_client.get(result["workUrl"])
+    assert public_work.status_code == 200
+    body = public_work.json()
+    assert body["emotion"] == "sadness"
+    assert body["caption"] == payload["caption"]
+    assert "transcript" not in body
+    assert test_client.get(body["coverUrl"]).content == png
+    assert test_client.get(body["audioUrl"]).content.startswith(b"RIFF")
+    assert (
+        test_client.get(f"/api/public/works/{result['id']}/portrait.json").status_code
+        == 404
+    )
+
+
+def test_public_work_can_expose_a_process_film(client) -> None:
+    test_client, _, _ = client
+    png = b"\x89PNG\r\n\x1a\n" + b"public-film"
+    webm = b"\x1aE\xdf\xa3" + b"minimal-webm-payload"
+    payload = {
+        "screenshot_data_url": "data:image/png;base64,"
+        + base64.b64encode(png).decode("ascii"),
+        "processed_audio_data_url": "data:audio/wav;base64,"
+        + base64.b64encode(wav_bytes()).decode("ascii"),
+        "process_video_data_url": "data:video/webm;codecs=vp9,opus;base64,"
+        + base64.b64encode(webm).decode("ascii"),
+        "emotion": "joy",
+        "caption": "光在指尖留下回声。",
+    }
+    created = test_client.post("/api/public/works", json=payload)
+    assert created.status_code == 200
+    body = test_client.get(created.json()["workUrl"]).json()
+    assert body["has_process_video"] is True
+    assert test_client.get(body["videoUrl"]).content == webm
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -1174,3 +1229,64 @@ def test_stt_timeout_has_readable_recovery_message(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(stt_adapter.asyncio, "wait_for", immediate_timeout)
     with pytest.raises(STTError, match="shorter WAV"):
         asyncio.run(stt_adapter.FasterWhisperAdapter().transcribe(audio))
+
+
+@pytest.mark.parametrize(
+    ("tag", "expected"),
+    [
+        ("<|HAPPY|>", Emotion.JOY),
+        ("<|SAD|>", Emotion.SADNESS),
+        ("<|ANGRY|>", Emotion.ANGER),
+        ("<|FEARFUL|>", Emotion.ANXIETY),
+        ("<|NEUTRAL|>", Emotion.NEUTRAL_MIXED),
+    ],
+)
+def test_sensevoice_tags_map_to_public_emotions(tag: str, expected: Emotion) -> None:
+    emotion, raw = stt_adapter._sensevoice_emotion(f"<|zh|>{tag}<|Speech|>hello")
+    assert emotion == expected
+    assert raw == tag[2:-2]
+
+
+def test_sensevoice_transcript_keeps_audio_emotion_metadata(monkeypatch, tmp_path) -> None:
+    class FakeSenseVoiceAdapter:
+        async def transcribe(self, _audio_path):
+            return SpeechRecognition(
+                text="I am fine",
+                provider="sensevoice",
+                speech_emotion=Emotion.SADNESS,
+                raw_emotion="SAD",
+            )
+
+    monkeypatch.setattr(stt_adapter, "get_stt_adapter", lambda: FakeSenseVoiceAdapter())
+    transcript = asyncio.run(stt_adapter.transcribe_audio(tmp_path / "audio.wav"))
+    assert transcript == "I am fine"
+    assert transcript.provider == "sensevoice"
+    assert transcript.speech_emotion == Emotion.SADNESS
+    assert transcript.raw_emotion == "SAD"
+
+
+def test_sensevoice_emotion_is_the_primary_decision_signal() -> None:
+    decision = asyncio.run(
+        emotion_adapter.analyze_emotion(
+            "I feel happy today",
+            AudioFeatures(volume=0.4, pitch=0.4, brightness=0.4),
+            speech_emotion=Emotion.ANGER,
+            speech_emotion_tag="ANGRY",
+        )
+    )
+    assert decision.result.emotion == Emotion.ANGER
+    assert decision.provider == "local:sensevoice"
+    assert decision.weights["sensevoice"] == 1.0
+
+
+def test_neutral_sensevoice_can_use_strong_text_evidence() -> None:
+    decision = asyncio.run(
+        emotion_adapter.analyze_emotion(
+            "我好想哭，快撑不住了",
+            AudioFeatures(volume=0.4, pitch=0.4, brightness=0.4),
+            speech_emotion=Emotion.NEUTRAL_MIXED,
+            speech_emotion_tag="NEUTRAL",
+        )
+    )
+    assert decision.result.emotion == Emotion.SADNESS
+    assert decision.provider == "sensevoice:text_override"

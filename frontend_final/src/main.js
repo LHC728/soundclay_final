@@ -1,6 +1,14 @@
 import './style.css'
 import { createSculpture } from './sculpture.js'
 import { SoundClayAudio } from './audio.js'
+import {
+  analyzeRecording,
+  createPublicWork,
+  shareUrl,
+  startObsRecording,
+  stopObsRecording,
+} from './api.js'
+import { buildEmotionCard, pickCaption, printCard } from './emotion-card.js'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000'
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000/ws/ring'
@@ -47,7 +55,7 @@ const audio = new SoundClayAudio({
   },
 })
 
-const STATE_INDEX = { idle: 0, recording: 0, mode: 1, sculpt: 2, result: 3 }
+const STATE_INDEX = { idle: 0, recording: 0, understanding: 1, mode: 1, sculpt: 2, result: 3 }
 let state = 'idle'
 let mode = 0.5
 let modeSelectionCommitted = false
@@ -63,7 +71,11 @@ let isCompleting = false
 let localSizeDemo = 0
 let materialRequest = Promise.resolve(null)
 let savedWork = null
+let savePromise = Promise.resolve(null)
 let finalMotion = {}
+let detectedEmotion = 'neutral_mixed'
+let obsRecordingStarted = false
+let obsStartPromise = Promise.resolve(false)
 const lastAbletonSync = { twist: 0, finger: 0 }
 const heldTwistKeys = new Set()
 const SIZE_LEVELS = [-1, 0, 1]
@@ -183,6 +195,9 @@ function handleSocketEvent(message) {
       break
     case 'audio_ready':
       void loadRingAudio(payload)
+      break
+    case 'emotion_ready':
+      if (typeof payload.emotion === 'string') detectedEmotion = payload.emotion
       break
     case 'imu': {
       if (state !== 'sculpt' || ringFrozen) break
@@ -355,6 +370,18 @@ function render() {
     return
   }
 
+  if (state === 'understanding') {
+    copy.innerHTML = `
+      <h1 class="title">正在读取这段声音</h1>
+      <p class="subtitle">识别结果只用于生成作品，不会显示在页面上。</p>
+    `
+    controls.innerHTML = `
+      <div class="analysis-loader" aria-label="正在读取声音"></div>
+      <div class="tiny-label">读取声音 · 塑造材料</div>
+    `
+    return
+  }
+
   if (state === 'mode') {
     copy.innerHTML = `
       <h1 class="title">选择声音的方向</h1>
@@ -475,6 +502,9 @@ async function stopRecording() {
 
   try {
     await audio.stopRecording()
+    setState('understanding')
+    const analysis = await analyzeRecording(audio.exportOriginalWav())
+    detectedEmotion = analysis.emotion || 'neutral_mixed'
     setMode(0.5)
     setState('mode')
   } catch (error) {
@@ -513,6 +543,18 @@ function enterSculpt() {
   // 浏览器仅静音分析录音并驱动粒子，观众听到的声音只来自 Ableton Live。
   audio.playLoop({ muted: true })
   setState('sculpt')
+  obsRecordingStarted = false
+  obsStartPromise = startObsRecording()
+    .then(() => {
+      obsRecordingStarted = true
+      showToast('创作过程录制已开始')
+      return true
+    })
+    .catch(() => {
+      obsRecordingStarted = false
+      showToast('OBS 未连接 · 继续本地创作')
+      return false
+    })
   materialRequest = triggerAbletonScene().catch((error) => {
     showToast(error instanceof Error ? error.message : '无法触发 Ableton Live')
     return null
@@ -648,7 +690,7 @@ function completeCreation({ message = '作品已凝固', burst = false } = {}) {
     void stopAbletonPlayback().catch((error) => {
       showToast(error instanceof Error ? error.message : '无法停止 Ableton Live')
     })
-    void saveCurrentWork()
+    savePromise = saveCurrentWork()
   }
 
   if (burst) completionTimer = window.setTimeout(finalize, 260)
@@ -691,6 +733,19 @@ function blobToDataUrl(blob) {
 async function saveCurrentWork() {
   try {
     await materialRequest
+    await obsStartPromise
+    let useObsRecording = false
+    if (obsRecordingStarted) {
+      try {
+        await stopObsRecording()
+        useObsRecording = true
+      } catch {
+        showToast('OBS 录像未保存 · 作品仍会生成')
+      } finally {
+        obsRecordingStarted = false
+      }
+    }
+
     const screenshotBlob = await sculpture.captureBlob()
     const processedAudioBlob = audio.hasRecording ? await audio.exportProcessedWav() : null
     const [screenshotDataUrl, processedAudioDataUrl] = await Promise.all([
@@ -710,10 +765,44 @@ async function saveCurrentWork() {
       const detail = await response.json().catch(() => ({}))
       throw new Error(detail.detail || `本地保存失败（HTTP ${response.status}）`)
     }
-    savedWork = await response.json()
+    const privateWork = await response.json()
+    let publicWork = null
+    let caption = null
+    let url = null
+    if (processedAudioDataUrl) {
+      caption = pickCaption(detectedEmotion)
+      const publicPayload = {
+        screenshot_data_url: screenshotDataUrl,
+        processed_audio_data_url: processedAudioDataUrl,
+        emotion: detectedEmotion,
+        caption,
+        final_motion: finalMotion,
+        use_obs_recording: useObsRecording,
+      }
+      try {
+        publicWork = await createPublicWork(publicPayload)
+      } catch (error) {
+        if (!useObsRecording) throw error
+        showToast('OBS 视频不可用 · 已保存扫码作品')
+        publicWork = await createPublicWork({ ...publicPayload, use_obs_recording: false })
+      }
+      url = shareUrl(publicWork.workId)
+    }
+
+    savedWork = {
+      ...privateWork,
+      publicWork,
+      caption,
+      url,
+      emotion: detectedEmotion,
+      audioBlob: processedAudioBlob,
+      coverBlob: screenshotBlob,
+    }
     if (savedWork.id) showToast(`作品已保存 · ${savedWork.id}`)
+    return savedWork
   } catch (error) {
     showToast(error instanceof Error ? error.message : '本地保存失败')
+    return null
   }
 }
 
@@ -723,6 +812,20 @@ async function shareWork() {
   showToast('正在生成')
 
   try {
+    await savePromise
+    if (savedWork?.publicWork && savedWork.url) {
+      const card = await buildEmotionCard({
+        emotion: savedWork.emotion,
+        caption: savedWork.caption,
+        url: savedWork.url,
+        savedAt: savedWork.publicWork.saved_at,
+      })
+      savedWork.cardBlob = card.blob
+      openShareSheet()
+      showToast('扫码作品卡片已生成')
+      return
+    }
+
     const [audioBlob, coverBlob] = await Promise.all([
       audio.exportProcessedWav(),
       sculpture.captureBlob(),
@@ -752,6 +855,65 @@ async function shareWork() {
   }
 }
 
+function openShareSheet() {
+  const cardUrl = URL.createObjectURL(savedWork.cardBlob)
+  const sheet = document.createElement('section')
+  sheet.className = 'share-sheet'
+  sheet.innerHTML = `
+    <div class="share-sheet__backdrop"></div>
+    <div class="share-sheet__panel" role="dialog" aria-modal="true" aria-label="分享作品">
+      <button class="share-sheet__close" aria-label="关闭">×</button>
+      <div class="share-sheet__header">
+        <p>VOICE ARCHIVE</p>
+        <h2>带走这片声音</h2>
+        <span>扫码页需由同一局域网中的 SoundClay 服务提供。</span>
+      </div>
+      <img class="share-sheet__card" src="${cardUrl}" alt="作品卡片预览" />
+      <div class="share-sheet__actions">
+        <button class="primary-button" data-action="native">分享链接</button>
+        <button class="secondary-button" data-action="copy">复制链接</button>
+        <button class="secondary-button" data-action="download-card">下载卡片</button>
+        <button class="secondary-button" data-action="print">打印 A6</button>
+        <button class="secondary-button" data-action="download-audio">下载声音</button>
+      </div>
+    </div>
+  `
+  const close = () => {
+    URL.revokeObjectURL(cardUrl)
+    sheet.remove()
+  }
+  sheet.querySelector('.share-sheet__close').addEventListener('click', close)
+  sheet.querySelector('.share-sheet__backdrop').addEventListener('click', close)
+  sheet.querySelector('[data-action="download-card"]').addEventListener('click', () => {
+    downloadBlob(savedWork.cardBlob, `SoundClay-card-${savedWork.publicWork.workId}.png`)
+  })
+  sheet.querySelector('[data-action="download-audio"]').addEventListener('click', () => {
+    downloadBlob(savedWork.audioBlob, `SoundClay-${savedWork.publicWork.workId}.wav`)
+  })
+  sheet.querySelector('[data-action="print"]').addEventListener('click', () => printCard(savedWork.cardBlob))
+  sheet.querySelector('[data-action="copy"]').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(savedWork.url)
+      showToast('链接已复制')
+    } catch {
+      showToast('无法复制链接')
+    }
+  })
+  sheet.querySelector('[data-action="native"]').addEventListener('click', async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'SoundClay 作品', text: savedWork.caption, url: savedWork.url })
+      } else {
+        await navigator.clipboard.writeText(savedWork.url)
+        showToast('链接已复制')
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError') showToast('分享失败，请复制链接')
+    }
+  })
+  document.body.append(sheet)
+}
+
 function downloadBlob(blob, name) {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
@@ -768,7 +930,11 @@ function restart() {
   audio.reset()
   nodes = []
   savedWork = null
+  savePromise = Promise.resolve(null)
   finalMotion = {}
+  detectedEmotion = 'neutral_mixed'
+  obsRecordingStarted = false
+  obsStartPromise = Promise.resolve(false)
   materialRequest = Promise.resolve(null)
   resetRingEventState(null)
   mode = 0.5

@@ -221,6 +221,66 @@ def _local_decision(
     )
 
 
+def _sensevoice_decision(
+    local: LocalEmotionEvidence,
+    started: float,
+    speech_emotion: Emotion,
+    speech_emotion_tag: str | None,
+) -> EmotionDecision:
+    """Use SenseVoice directly, with strong-text correction for neutral audio."""
+    text_ranked = sorted(local.text_scores.items(), key=lambda item: item[1], reverse=True)
+    text_name, text_score = text_ranked[0]
+    text_margin = text_score - text_ranked[1][1]
+    text_emotion = Emotion(text_name)
+    use_text_override = (
+        speech_emotion == Emotion.NEUTRAL_MIXED
+        and text_emotion != Emotion.NEUTRAL_MIXED
+        and text_score >= 0.72
+        and text_margin >= 0.30
+    )
+    decided_emotion = text_emotion if use_text_override else speech_emotion
+    scores = {
+        name: (
+            local.text_scores[name]
+            if use_text_override
+            else 1.0 if name == decided_emotion.value else 0.0
+        )
+        for name in _EMOTION_NAMES
+    }
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    top_name, top_score = ranked[0]
+    margin = top_score - ranked[1][1]
+    confidence = min(0.94, max(0.60, 0.50 + top_score * 0.28 + margin * 0.32))
+    label = speech_emotion_tag or speech_emotion.value.upper()
+    if use_text_override:
+        reason = (
+            f"SenseVoice speech-emotion tag {label} was neutral; strong text "
+            f"evidence automatically selected {decided_emotion.value}."
+        )
+        provider = "sensevoice:text_override"
+        weights = {"text": 1.0, "acoustic": 0.0, "glm": 0.0, "sensevoice": 0.0, "local": 0.0}
+    else:
+        reason = (
+            f"SenseVoice speech-emotion tag {label} mapped to "
+            f"{decided_emotion.value}; the SenseVoice result is the "
+            "sole emotion decision signal."
+        )
+        provider = "local:sensevoice"
+        weights = {"text": 0.0, "acoustic": 0.0, "glm": 0.0, "sensevoice": 1.0, "local": 0.0}
+    return EmotionDecision(
+        result=EmotionResult(
+            emotion=Emotion(top_name),
+            confidence=confidence,
+            reason=reason,
+        ),
+        scores=scores,
+        local_scores=local.local_scores,
+        weights=weights,
+        provider=provider,
+        timing_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
+
+
 def _fuse(
     local: LocalEmotionEvidence,
     remote: GlmEmotionResult,
@@ -345,9 +405,19 @@ def _reset_runtime_state() -> None:
 async def analyze_emotion(
     transcript: str,
     features: AudioFeatures,
+    *,
+    speech_emotion: Emotion | None = None,
+    speech_emotion_tag: str | None = None,
 ) -> EmotionDecision:
     started = time.perf_counter()
     local = analyze_emotion_evidence(transcript, features)
+    if speech_emotion is not None:
+        return _sensevoice_decision(
+            local,
+            started,
+            speech_emotion,
+            speech_emotion_tag,
+        )
     provider = os.getenv("EMOTION_PROVIDER", "hybrid").strip().lower() or "hybrid"
     api_key = os.getenv("EMOTION_API_KEY", "").strip()
     if provider == "local" or not api_key:

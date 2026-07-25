@@ -158,6 +158,51 @@ class SaveRequest(BaseModel):
         return value
 
 
+class PublicWorkRequest(BaseModel):
+    """The deliberately small, shareable projection of a finished work."""
+
+    screenshot_data_url: str
+    processed_audio_data_url: str
+    emotion: Emotion
+    caption: str = Field(min_length=1, max_length=120)
+    final_motion: dict[str, Any] = Field(default_factory=dict)
+    process_video_data_url: str | None = None
+    use_obs_recording: bool = False
+    process_frames_data_urls: list[str] = Field(default_factory=list, max_length=150)
+    process_frame_rate: float = Field(default=5.0, ge=1.0, le=5.0)
+
+    @field_validator("caption")
+    @classmethod
+    def normalize_caption(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("caption cannot be blank")
+        return normalized
+
+    @field_validator("final_motion")
+    @classmethod
+    def validate_final_motion(cls, value: dict[str, Any]) -> dict[str, Any]:
+        def check(item: Any) -> None:
+            if isinstance(item, bool) or item is None or isinstance(item, str):
+                return
+            if isinstance(item, (int, float)):
+                if not math.isfinite(float(item)):
+                    raise ValueError("motion values must be finite")
+                return
+            if isinstance(item, dict):
+                for nested in item.values():
+                    check(nested)
+                return
+            if isinstance(item, list):
+                for nested in item:
+                    check(nested)
+                return
+            raise ValueError("motion values must be JSON-compatible")
+
+        check(value)
+        return value
+
+
 class EventMessage(BaseModel):
     type: str
     timestamp: int

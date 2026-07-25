@@ -477,6 +477,116 @@ input:focus-visible {
   stroke-linejoin: round;
 }
 
+.analysis-loader {
+  width: 36px;
+  height: 36px;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: #d9fff8;
+  border-radius: 50%;
+  animation: soundclay-spin 780ms linear infinite;
+}
+
+.secondary-button {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  cursor: pointer;
+}
+
+.share-sheet {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+}
+
+.share-sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 6, 8, 0.78);
+  backdrop-filter: blur(14px);
+}
+
+.share-sheet__panel {
+  position: relative;
+  width: min(100%, 520px);
+  max-height: min(88dvh, 780px);
+  box-sizing: border-box;
+  overflow: auto;
+  padding: 26px 20px calc(24px + env(safe-area-inset-bottom));
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 28px;
+  background: #0c1115;
+  box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.38);
+}
+
+.share-sheet__close {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  right: 14px;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.share-sheet__card {
+  display: block;
+  width: min(100%, 260px);
+  margin: 0 auto 22px;
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.share-sheet__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.share-sheet__header {
+  margin: 0 0 18px;
+  text-align: center;
+}
+
+.share-sheet__header p {
+  margin: 0 0 8px;
+  color: rgba(194, 238, 232, 0.68);
+  font: 600 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.15em;
+}
+
+.share-sheet__header h2 {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 20px;
+  font-weight: 540;
+}
+
+.share-sheet__header span {
+  display: block;
+  margin-top: 7px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+}
+
+.share-sheet__actions .primary-button {
+  grid-column: 1 / -1;
+}
+
+@keyframes soundclay-spin {
+  to { transform: rotate(360deg); }
+}
+
 .progress-dots {
   position: fixed;
   z-index: 45;
