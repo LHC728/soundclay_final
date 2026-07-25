@@ -17,6 +17,7 @@ const app = document.querySelector('#app')
 app.innerHTML = `
   <main class="soundclay" data-state="idle">
     <p class="brand">SoundClay</p>
+    <p class="connection-status" id="connection-status" data-connection="connecting">正在连接戒指</p>
 
     <section class="stage" aria-live="polite">
       <div class="visual" id="visual" aria-hidden="true"></div>
@@ -186,8 +187,10 @@ function handleSocketEvent(message) {
       if (typeof payload.ringConnected === 'boolean') ringConnected = payload.ringConnected
       if (typeof payload.connected === 'boolean') ringConnected = payload.connected
       if (payload.phase === 'connected') ringConnected = true
-      const label = ringConnected ? '戒指已连接' : ringEnabled ? '等待戒指' : '后端已连接 · 模拟模式'
-      updateConnectionStatus(label, ringConnected ? 'ring' : 'online')
+      const phase = String(payload.ringPhase || payload.phase || '').toLowerCase()
+      const isConnecting = ['connecting', 'connected_settling', 'reconnecting', 'scanning'].includes(phase)
+      const label = ringConnected ? '戒指已连接' : isConnecting ? '正在连接戒指' : '戒指未连接'
+      updateConnectionStatus(label, ringConnected ? 'ring' : isConnecting ? 'connecting' : 'offline')
       break
     }
     case 'recording':
@@ -293,11 +296,11 @@ function handleSocketEvent(message) {
 
 function connectRingSocket() {
   if (socket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(socket.readyState)) return
-  updateConnectionStatus('正在连接后端', 'connecting')
+  updateConnectionStatus('正在连接戒指', 'connecting')
   socket = new WebSocket(WS_URL)
   socket.addEventListener('open', () => {
     reconnectDelay = 800
-    updateConnectionStatus('后端已连接 · 模拟模式', 'online')
+    updateConnectionStatus(ringConnected ? '戒指已连接' : '正在获取戒指状态', ringConnected ? 'ring' : 'connecting')
   })
   socket.addEventListener('message', (event) => {
     try {
@@ -309,7 +312,7 @@ function connectRingSocket() {
   socket.addEventListener('close', () => {
     socket = null
     ringConnected = false
-    updateConnectionStatus('后端离线 · 本地模式', 'offline')
+    updateConnectionStatus('戒指连接已断开', 'offline')
     clearTimeout(reconnectTimer)
     reconnectTimer = window.setTimeout(connectRingSocket, reconnectDelay)
     reconnectDelay = Math.min(8000, reconnectDelay * 1.7)
