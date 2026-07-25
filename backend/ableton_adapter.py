@@ -17,6 +17,8 @@ _DEFAULT_MIDI_PORT = "SoundClay MIDI"
 _MIDI_CC_TIMBRE = 20
 _MIDI_CC_MAIN_GAIN = 21
 _MIDI_NOTE_BURST = 70
+_MIDI_BURST_HIT_COUNT = 2
+_MIDI_BURST_HIT_INTERVAL_SECONDS = 0.22
 _MIDI_SCENE_NOTE_HOLD_SECONDS = 0.3
 _MIDI_TIMBRE_VALUES = (16, 64, 112)
 _MIDI_TWIST_DEAD_ZONE = 0.25
@@ -138,7 +140,12 @@ def status() -> dict[str, Any]:
                     "values": list(_MIDI_TIMBRE_VALUES),
                 },
                 "mainGain": {"type": "cc", "number": _MIDI_CC_MAIN_GAIN},
-                "burstClip": {"type": "note", "number": _MIDI_NOTE_BURST},
+                "burstClip": {
+                    "type": "note",
+                    "number": _MIDI_NOTE_BURST,
+                    "hitsPerGesture": _MIDI_BURST_HIT_COUNT,
+                    "intervalMs": round(_MIDI_BURST_HIT_INTERVAL_SECONDS * 1000),
+                },
             },
             "scenes": {
                 f"{emotion}:{mode}": note
@@ -273,6 +280,16 @@ def send_midi_note(note: int, velocity: int = 127, *, hold_seconds: float = 0.0)
     return sent
 
 
+def send_burst_hits(velocity: int) -> bool:
+    """Trigger the mapped Drum Layer twice for one physical wave gesture."""
+    sent = False
+    for index in range(_MIDI_BURST_HIT_COUNT):
+        sent = send_midi_note(_MIDI_NOTE_BURST, velocity) or sent
+        if index + 1 < _MIDI_BURST_HIT_COUNT:
+            time.sleep(_MIDI_BURST_HIT_INTERVAL_SECONDS)
+    return sent
+
+
 def send_scene(emotion: str, mode: str) -> bool:
     canonical_emotion = emotion.replace("-", "_").strip().lower()
     key = (canonical_emotion, mode.strip().lower())
@@ -326,7 +343,7 @@ def send_control(control: str, value: str | int | float) -> bool:
         midi_sent = send_midi_cc(_MIDI_CC_MAIN_GAIN, floor + energy * (1.0 - floor))
     elif control == "burst":
         strength = max(0.0, min(1.0, float(value)))
-        midi_sent = send_midi_note(_MIDI_NOTE_BURST, max(1, round(strength * 127)))
+        midi_sent = send_burst_hits(max(1, round(strength * 127)))
     if not _enabled():
         return midi_sent
     config = status()

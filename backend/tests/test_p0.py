@@ -715,7 +715,9 @@ def test_ableton_midi_reuses_saved_live_set_mapping(monkeypatch) -> None:
     ]
     cc_messages = [message for message in messages if message.type == "control_change"]
     assert [(message.control, message.value) for message in cc_messages] == [(20, 112), (21, 70)]
-    assert [(message.type, getattr(message, "note", None)) for message in messages[-2:]] == [
+    assert [(message.type, getattr(message, "note", None)) for message in messages[-4:]] == [
+        ("note_on", 70),
+        ("note_off", 70),
         ("note_on", 70),
         ("note_off", 70),
     ]
